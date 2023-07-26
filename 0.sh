@@ -314,7 +314,13 @@ download_tuic() {
 # 配置 sing-box 开机自启服务
 function configure_sing_box_service() {
     echo "配置 sing-box 开机自启服务..."
-    echo "[Unit]
+    local service_file="/etc/systemd/system/sing-box.service"
+
+    if [[ -f $service_file ]]; then
+        rm "$service_file"
+    fi
+    
+       local service_config='[Unit]
 Description=sing-box service
 Documentation=https://sing-box.sagernet.org
 After=network.target nss-lookup.target
@@ -328,16 +334,18 @@ RestartSec=1800s
 LimitNOFILE=infinity
 
 [Install]
-WantedBy=multi-user.target" |  tee /etc/systemd/system/sing-box.service >/dev/null
+WantedBy=multi-user.target'
+
+        echo "$service_config" >"$service_file"
+        echo "sing-box 开机自启动服务已配置。"
 }
 
 # 函数：配置 Caddy 自启动服务
 configure_caddy_service() {
-    echo "配置 Caddy 自启动服务..."
+    echo "配置 Caddy 开机自启动服务..."
     local service_file="/etc/systemd/system/caddy.service"
 
     if [[ -f $service_file ]]; then
-        echo "Caddy 服务文件已存在，重新写入配置..."
         rm "$service_file"
     fi
 
@@ -362,10 +370,47 @@ AmbientCapabilities=CAP_NET_BIND_SERVICE
 WantedBy=multi-user.target'
 
         echo "$service_config" >"$service_file"
-        systemctl daemon-reload
-        systemctl enable caddy
-        systemctl start caddy
-        systemctl reload caddy
-        echo "Caddy 自启动服务已配置。"
+        echo "Caddy 开机自启动服务已配置。"
 }
+
+# 配置tuic开机自启服务
+function configure_tuic_service() {
+    echo "配置TUIC开机自启服务..."
+    local service_file="/etc/systemd/system/tuic.service"
+
+    if [[ -f $service_file ]]; then
+        rm "$service_file"
+    fi
+    
+        local service_config='[Unit]
+Description=tuic service
+Documentation=https://github.com/EAimTY/tuic
+After=network.target nss-lookup.target
+
+[Service]
+User=root
+WorkingDirectory=/usr/local/etc/tuic/
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW
+ExecStart=/usr/bin/tuic -c /usr/local/etc/tuic/config.json
+Restart=on-failure
+RestartSec=10
+LimitNOFILE=infinity
+
+[Install]
+WantedBy=multi-user.target'
+
+        echo "$service_config" >"$service_file"
+        echo "TUIC 开机自启动服务已配置。"
+}
+
+
+
+
+
+
+
+
+
+
 
