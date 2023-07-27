@@ -69,7 +69,6 @@ function check_firewall_configuration() {
 
     echo "检查防火墙配置..."
 
-
     case $firewall in
         ufw)
             if ! ufw status | grep -q "Status: active"; then
@@ -78,6 +77,10 @@ function check_firewall_configuration() {
 
             if ! ufw status | grep -q " $listen_port"; then
                 ufw allow "$listen_port"
+            fi
+
+            if ! ufw status | grep -q " $override_port"; then
+                ufw allow "$override_port"
             fi
 
             if ! ufw status | grep -q " 80"; then
@@ -93,6 +96,14 @@ function check_firewall_configuration() {
 
             if ! iptables -C INPUT -p udp --dport "$listen_port" -j ACCEPT >/dev/null 2>&1; then
                 iptables -A INPUT -p udp --dport "$listen_port" -j ACCEPT
+            fi
+
+            if ! iptables -C INPUT -p tcp --dport "$override_port" -j ACCEPT >/dev/null 2>&1; then
+                iptables -A INPUT -p tcp --dport "$override_port" -j ACCEPT
+            fi
+
+            if ! iptables -C INPUT -p udp --dport "$override_port" -j ACCEPT >/dev/null 2>&1; then
+                iptables -A INPUT -p udp --dport "$override_port" -j ACCEPT
             fi
 
             if ! iptables -C INPUT -p tcp --dport 80 -j ACCEPT >/dev/null 2>&1; then
@@ -116,6 +127,14 @@ function check_firewall_configuration() {
                 firewall-cmd --zone=public --add-port="$listen_port/udp" --permanent
             fi
 
+            if ! firewall-cmd --zone=public --list-ports | grep -q "$override_port/tcp"; then
+                firewall-cmd --zone=public --add-port="$override_port/tcp" --permanent
+            fi
+
+            if ! firewall-cmd --zone=public --list-ports | grep -q "$override_port/udp"; then
+                firewall-cmd --zone=public --add-port="$override_port/udp" --permanent
+            fi
+
             if ! firewall-cmd --zone=public --list-ports | grep -q "80/tcp"; then
                 firewall-cmd --zone=public --add-port=80/tcp --permanent
             fi
@@ -130,8 +149,6 @@ function check_firewall_configuration() {
             ;;
     esac
 }
-
-
 
 # 检查 sing-box 文件夹是否存在，如果不存在则创建
 function check_sing_box_folder() {
@@ -592,8 +609,18 @@ function uninstall_sing_box() {
     echo "sing-box 卸载完成。"
 }
 
-function Direct_install() {
+function Direct_extract_config_info() {
+    local local_ip
+    local_ip=$(curl -s http://ifconfig.me)
 
+    echo "========= 安装完成 ========="
+    echo "本机 IP 地址: $local_ip"
+    echo "监听端口: $listen_port"
+    echo "目标地址: $override_address"
+    echo "目标端口: $override_port"
+}
+
+function Direct_install() {
     install_dependencies
     enable_bbr
     select_sing_box_install_option
@@ -606,6 +633,7 @@ function Direct_install() {
     check_firewall_configuration    
     systemctl enable sing-box   
     systemctl start sing-box
+    Direct_extract_config_info
 }
 
 # 主菜单
