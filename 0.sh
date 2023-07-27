@@ -158,6 +158,29 @@ function check_sing_box_folder() {
     fi
 }
 
+# 检查 caddy 文件夹是否存在，如果不存在则创建
+function check_caddy_folder() {
+    local folder="/usr/local/etc/caddy"
+    if [[ ! -d "$folder" ]]; then
+        mkdir -p "$folder"
+    fi
+}
+
+
+# 创建文件目录
+function create_tuic_directory() {
+    local tuic_directory="/usr/local/etc/tuic"
+    local ssl_directory="/etc/ssl/private"
+    
+    if [[ ! -d "$tuic_directory" ]]; then
+        mkdir -p "$tuic_directory"
+    fi
+    
+    if [[ ! -d "$ssl_directory" ]]; then
+        mkdir -p "$ssl_directory"
+    fi
+}
+
 # 函数：开启 BBR
 enable_bbr() {
     if ! grep -q "net.core.default_qdisc=fq" /etc/sysctl.conf; then
@@ -329,7 +352,7 @@ install_caddy() {
 
     # 移动 Caddy 到 /usr/bin/
     echo "移动 Caddy 到 /usr/bin/..."
-    sudo mv caddy /usr/bin/
+    mv caddy /usr/bin/
 
     echo "Caddy 安装完成。"
 }
@@ -376,7 +399,7 @@ download_tuic() {
 
     # 赋予可执行权限
     echo "赋予可执行权限..."
-    chmod +x /usr/bin/tuic
+    chmod +x /usr/local/bin/tuic
 
     echo "TUIC 程序下载并安装完成。"
 }
@@ -463,7 +486,7 @@ User=root
 WorkingDirectory=/usr/local/etc/tuic/
 CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW
 AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW
-ExecStart=/usr/bin/tuic -c /usr/local/etc/tuic/config.json
+ExecStart=/usr/local/bin/tuic -c /usr/local/etc/tuic/config.json
 Restart=on-failure
 RestartSec=10
 LimitNOFILE=infinity
@@ -660,8 +683,468 @@ function ss_write_sing_box_config() {
 }
 
 
+# 函数：获取用户输入的监听端口
+caddy_listen_port() {
+    local default_port=443
+
+    while true; do
+        read -p "请输入监听端口（默认: $default_port）: " listen_port
+
+        if [[ -z $listen_port ]]; then
+            # Use the default port if the user presses Enter without entering any value
+            listen_port=$default_port
+            break
+        elif [[ $listen_port =~ ^[0-9]+$ ]]; then
+            # Validate if the input is a valid port number
+            if ((listen_port >= 1 && listen_port <= 65535)); then
+                break
+            else
+                echo "无效的端口号，请重新输入。"
+            fi
+        else
+            echo "无效的端口号，请重新输入。"
+        fi
+    done
+}  
+
+# 函数：生成随机用户名
+generate_caddy_auth_user() {
+    read -p "请输入用户名（默认自动生成）: " user_input
+
+    if [[ -z $user_input ]]; then
+        auth_user=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 8)
+    else
+        auth_user=$user_input
+    fi
+
+    echo "用户名: $auth_user"
+}
 
 
+# 函数：生成随机密码
+generate_caddy_auth_pass() {
+    read -p "请输入密码（默认自动生成）: " pass_input
+
+    if [[ -z $pass_input ]]; then
+        auth_pass=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 16)
+    else
+        auth_pass=$pass_input
+    fi
+
+    echo "密码: $auth_pass"
+}
+
+
+# 函数：获取用户输入的伪装网址
+get_caddy_fake_site() {
+    while true; do
+        read -p "请输入伪装网址（默认: www.fan-2000.com）: " fake_site
+        fake_site=${fake_site:-"www.fan-2000.com"}
+
+        # Validate the fake site URL
+        if curl --output /dev/null --silent --head --fail "$fake_site"; then
+            echo "伪装网址: $fake_site"
+            break
+        else
+            echo "伪装网址无效或不可用，请重新输入。"
+        fi
+    done
+}
+
+
+# 函数：获取用户输入的域名，如果域名未绑定本机 IP，则要求重新输入
+get_caddy_domain() {
+    read -p "请输入域名（用于自动申请证书）: " domain
+    while true; do
+        if [[ -z $domain ]]; then
+            echo "域名不能为空，请重新输入。"
+        else
+            if ping -c 1 $domain >/dev/null 2>&1; then
+                break
+            else
+                echo "域名未绑定本机 IP，请重新输入。"
+            fi
+        fi
+        read -p "请输入域名（用于自动申请证书）: " domain
+    done
+
+    echo "域名: $domain"
+}
+
+# 函数：创建 Caddy 配置文件
+create_caddy_config() {
+    local config_file="/usr/local/etc/caddy/caddy.json"
+
+    echo "{
+  \"apps\": {
+    \"http\": {
+      \"servers\": {
+        \"https\": {
+          \"listen\": [\":$listen_port\"],
+          \"routes\": [
+            {
+              \"handle\": [
+                {
+                  \"handler\": \"forward_proxy\",
+                  \"auth_user_deprecated\": \"$auth_user\",
+                  \"auth_pass_deprecated\": \"$auth_pass\",
+                  \"hide_ip\": true,
+                  \"hide_via\": true,
+                  \"probe_resistance\": {}
+                }
+              ]
+            },
+            {
+              \"handle\": [
+                {
+                  \"handler\": \"headers\",
+                  \"response\": {
+                    \"set\": {
+                      \"Strict-Transport-Security\": [\"max-age=31536000; includeSubDomains; preload\"]
+                    }
+                  }
+                },
+                {
+                  \"handler\": \"reverse_proxy\",
+                  \"headers\": {
+                    \"request\": {
+                      \"set\": {
+                        \"Host\": [
+                          \"{http.reverse_proxy.upstream.hostport}\"
+                        ],
+                        \"X-Forwarded-Host\": [\"{http.request.host}\"]
+                      }
+                    }
+                  },
+                  \"transport\": {
+                    \"protocol\": \"http\",
+                    \"tls\": {}
+                  },
+                  \"upstreams\": [
+                    {\"dial\": \"$fake_site:443\"}
+                  ]
+                }
+              ]
+            }
+          ],
+          \"tls_connection_policies\": [
+            {
+              \"match\": {
+                \"sni\": [\"$domain\"]
+              },
+              \"protocol_min\": \"tls1.2\",
+              \"protocol_max\": \"tls1.2\",
+              \"cipher_suites\": [\"TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256\"],
+              \"curves\": [\"secp521r1\",\"secp384r1\",\"secp256r1\"]
+            }
+          ],
+          \"protocols\": [\"h1\",\"h2\"]
+        }
+      }
+    },
+    \"tls\": {
+      \"certificates\": {
+        \"automate\": [\"$domain\"]
+      },
+      \"automation\": {
+        \"policies\": [
+          {
+            \"issuers\": [
+              {
+                \"module\": \"acme\"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}" > "$config_file"
+
+    echo "配置文件 $config_file 写入成功。"
+}
+
+#函数：测试 caddy 配置文件
+test_caddy_config() {
+    echo "测试 Caddy 配置是否正确..."
+    local output
+    local caddy_pid
+
+    # 运行Caddy并捕获输出
+    output=$(timeout 15 /usr/bin/caddy run --environ --config /usr/local/etc/caddy/caddy.json 2>&1 &)
+    caddy_pid=$!
+
+    # 等待Caddy进程完成或超时
+    wait $caddy_pid 2>/dev/null
+
+    # 检查输出中是否包含错误提示
+    if echo "$output" | grep -i "error"; then
+        echo -e "${RED}Caddy 配置测试未通过，请检查配置文件${NC}"
+        echo "$output" | grep -i "error" --color=always  # 输出包含错误的行，并以红色高亮显示
+    else
+        echo -e "${GREEN}Caddy 配置测试通过${NC}"
+    fi
+}
+
+
+# 设置监听端口
+function tuic_listen_port() {
+    local default_port="443"
+
+    while true; do
+        read -p "请输入监听端口 (默认$default_port): " listen_port
+        listen_port=${listen_port:-$default_port}
+
+        if [[ $listen_port =~ ^[1-9][0-9]{0,4}$ && $listen_port -le 65535 ]]; then
+            echo -e "${GREEN}监听端口设置成功：$listen_port${NC}"
+            break
+        else
+            echo -e "${RED}错误：监听端口范围必须在1-65535之间，请重新输入。${NC}"
+        fi
+    done
+}
+
+# 自动生成UUID
+function tuic_generate_uuid() {
+    if [[ -n $(command -v uuidgen) ]]; then
+        uuid=$(uuidgen)
+    elif [[ -n $(command -v uuid) ]]; then
+        uuid=$(uuid -v 4)
+    else
+        echo -e "${RED}错误：无法生成UUID，请手动设置。${NC}"
+        exit 1
+    fi
+    echo -e "${GREEN}生成的UUID为：$uuid${NC}"
+}
+
+# 设置密码
+function tuic_set_password() {
+    read -p "请输入密码（默认随机生成）: " password
+
+    # 如果密码为空，则随机生成一个密码
+    if [[ -z "$password" ]]; then
+        password=$(cat /dev/urandom | tr -dc 'a-z0-9' | fold -w 12 | head -n 1)
+        echo -e "${GREEN}生成的密码为：$password${NC}"
+    fi
+}
+
+# 添加多用户
+function tuic_add_multiple_users() {
+    while true; do
+        read -p "是否继续添加用户？(Y/N): " add_multiple_users
+
+        if [[ "$add_multiple_users" == "Y" || "$add_multiple_users" == "y" ]]; then
+            # 自动生成UUID
+            tuic_generate_uuid
+
+            # 设置密码
+            tuic_set_password
+
+            # 将UUID和密码添加到用户列表中
+            users+=",\n\"$uuid\": \"$password\""
+        elif [[ "$add_multiple_users" == "N" || "$add_multiple_users" == "n" ]]; then
+            break
+        else
+            echo -e "${RED}错误：无效的选择，请重新输入。${NC}"
+        fi
+    done
+}
+
+# 设置证书和私钥路径
+function set_certificate_and_private_key() {
+    while true; do
+        read -p "请输入证书路径 (默认/etc/ssl/private/cert.crt): " certificate_path
+        certificate_path=${certificate_path:-"/etc/ssl/private/cert.crt"}
+
+        if [[ "$certificate_path" != "/etc/ssl/private/cert.crt" && ! -f "$certificate_path" ]]; then
+            echo -e "${RED}错误：证书文件不存在，请重新输入。${NC}"
+        else
+            break
+        fi
+    done
+
+    while true; do
+        read -p "请输入私钥路径 (默认/etc/ssl/private/private.key): " private_key_path
+        private_key_path=${private_key_path:-"/etc/ssl/private/private.key"}
+
+        if [[ "$private_key_path" != "/etc/ssl/private/private.key" && ! -f "$private_key_path" ]]; then
+            echo -e "${RED}错误：私钥文件不存在，请重新输入。${NC}"
+        else
+            break
+        fi
+    done
+}
+
+# 设置拥塞控制算法
+function set_congestion_control() {
+    local default_congestion_control="bbr"
+
+    while true; do
+        read -p "请选择拥塞控制算法 (默认$default_congestion_control):
+ [1]. bbr
+ [2]. cubic
+ [3]. new_reno
+请输入对应的数字: " congestion_control
+
+        case $congestion_control in
+            1)
+                congestion_control="bbr"
+                break
+                ;;
+            2)
+                congestion_control="cubic"
+                break
+                ;;
+            3)
+                congestion_control="new_reno"
+                break
+                ;;
+            "")
+                congestion_control=$default_congestion_control
+                break
+                ;;
+            *)
+                echo -e "${RED}错误：无效的选择，请重新输入。${NC}"
+                ;;
+        esac
+    done
+}
+
+# 生成tuic的JSON配置文件
+function generate_tuic_config() {
+    local config_file="/usr/local/etc/tuic/config.json"
+    local users=""
+    local certificate=""
+    local private_key=""
+    
+    echo "生成tuic的JSON配置文件..."
+
+    # 设置监听端口
+    tuic_listen_port
+
+    # 自动生成UUID
+    tuic_generate_uuid
+
+    # 设置密码
+    tuic_set_password
+
+    # 将UUID和密码添加到用户列表中
+    users="\"$uuid\": \"$password\""
+
+    # 添加多用户
+    tuic_add_multiple_users
+
+    # 格式化用户列表
+    users=$(echo -e "$users" | sed -e 's/^/        /')
+
+    # 配置证书和私钥路径
+    set_certificate_and_private_key
+    certificate_path="$certificate_path"
+    private_key_path="$private_key_path"
+
+    # 设置拥塞控制算法
+    set_congestion_control
+
+    # 生成tuic配置文件
+    echo "{
+    \"server\": \"[::]:$listen_port\",
+    \"users\": {
+$users
+    },
+    \"certificate\": \"$certificate_path\",
+    \"private_key\": \"$private_key_path\",
+    \"congestion_control\": \"$congestion_control\",
+    \"alpn\": [\"h3\", \"spdy/3.1\"],
+    \"udp_relay_ipv6\": true,
+    \"zero_rtt_handshake\": false,
+    \"dual_stack\": true,
+    \"auth_timeout\": \"3s\",
+    \"task_negotiation_timeout\": \"3s\",
+    \"max_idle_time\": \"10s\",
+    \"max_external_packet_size\": 1500,
+    \"send_window\": 16777216,
+    \"receive_window\": 8388608,
+    \"gc_interval\": \"3s\",
+    \"gc_lifetime\": \"15s\",
+    \"log_level\": \"warn\"
+}" > "$config_file"
+}
+
+# 询问证书来源选择
+function ask_certificate_option() {
+    while true; do
+        read -p "请选择证书来源：
+ [1]. 自动申请证书
+ [2]. 自备证书
+请输入对应的数字: " certificate_option
+
+        case $certificate_option in
+            1)
+                echo "已选择自动申请证书。"
+                tuic_apply_certificate
+                break
+                ;;
+            2)
+                echo "已选择自备证书。"
+                break
+                ;;
+
+            *)
+                echo -e "${RED}错误：无效的选择，请重新输入。${NC}"
+                ;;
+        esac
+    done
+}
+
+# 申请证书
+function tuic_apply_certificate() {
+    local domain
+
+    # 验证域名
+    while true; do
+        read -p "请输入您的域名: " domain
+
+        # 检查域名是否绑定本机IP
+        if ping -c 1 "$domain" &>/dev/null; then
+            break
+        else
+            echo -e "${RED}错误：域名未解析或输入错误，请重新输入。${NC}"
+        fi
+    done
+    
+    # 安装 acme
+    echo "安装 acme..."
+    curl https://get.acme.sh | sh 
+    alias acme.sh=~/.acme.sh/acme.sh
+    ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt 
+
+    # 申请证书
+    echo "申请证书..."
+    ~/.acme.sh/acme.sh --issue -d "$domain" --standalone -k ec-256 --webroot /home/wwwroot/html 
+
+    # 安装证书
+    echo "安装证书..."
+    certificate_path=$(~/.acme.sh/acme.sh --install-cert -d "$domain" --ecc --key-file "$private_key_path" --fullchain-file "$certificate_path")
+
+    set_certificate_path="$certificate_path"
+    set_private_key_path="$private_key_path"
+}
+
+# 显示 tuic 配置信息
+function display_tuic_config() {
+    local config_file="/usr/local/etc/tuic/config.json"
+echo -e "${CYAN}TUIC节点配置信息：${NC}"    
+echo -e "${CYAN}==================================================================${NC}" 
+    echo "监听端口: $(jq -r '.server' "$config_file" | sed 's/\[::\]://')"
+echo -e "${CYAN}------------------------------------------------------------------${NC}" 
+    echo "UUID和密码列表:"
+    jq -r '.users | to_entries[] | "UUID:\(.key)\t密码:\(.value)"' "$config_file"
+echo -e "${CYAN}------------------------------------------------------------------${NC}" 
+    echo "拥塞控制算法: $(jq -r '.congestion_control' "$config_file")"
+echo -e "${CYAN}------------------------------------------------------------------${NC}" 
+    echo "ALPN协议:$(jq -r '.alpn[] | select(. != "")' "$config_file" | sed ':a;N;$!ba;s/\n/, /g')"
+echo -e "${CYAN}==================================================================${NC}"    
+}
 
 
 
@@ -680,7 +1163,27 @@ function restart_sing_box_service() {
     systemctl status sing-box
 }
 
+# 重启 naiveproxy 服务
+function restart_naiveproxy_service() {
+    echo "重启 naiveproxy 服务..."
+    systemctl reload caddy
 
+    if [[ $? -eq 0 ]]; then
+        echo "naiveproxy 服务已重启。"
+    else
+        echo -e "${RED}重启 sing-box 服务失败。${NC}"
+    fi
+
+    systemctl status caddy
+}
+
+# 重启 TUIC
+function restart_tuic() {
+    echo "重启 TUIC 服务..."
+    systemctl restart tuic.service
+    echo -e "${GREEN}TUIC 已重启...${NC}"
+    systemctl status tuic.service   
+}
 
 # 卸载 sing-box
 function uninstall_sing_box() {
@@ -696,6 +1199,29 @@ function uninstall_sing_box() {
     systemctl daemon-reload
 
     echo "sing-box 卸载完成。"
+}
+
+# 函数：卸载 NaiveProxy
+function uninstall_naiveproxy() {
+    echo "开始卸载 NaiveProxy..."
+    systemctl stop caddy
+    systemctl disable caddy
+    rm /etc/systemd/system/caddy.service
+    rm /usr/local/etc/caddy/caddy.json
+    rm /usr/bin/caddy
+    systemctl daemon-reload
+    echo "NaiveProxy 卸载完成。"
+}
+
+# 卸载 TUIC
+function uninstall_tuic() {
+    echo "卸载 TUIC 服务..."
+    systemctl stop tuic.service
+    systemctl disable tuic.service
+    rm /etc/systemd/system/tuic.service
+    rm /usr/local/etc/tuic/config.json
+    rm /usr/local/bin/tuic
+    echo -e "${GREEN}TUIC 服务已卸载...${NC}"
 }
 
 function Direct_extract_config_info() {
@@ -720,6 +1246,14 @@ function Shadowsocks_extract_config_info() {
     echo "密码: $ss_password"
 }
 
+function NaiveProxy_extract_config_info() {
+
+    echo -e "${GREEN}NaiveProxy节点配置信息:${NC}"
+    echo -e "监听端口: ${GREEN}$listen_port${NC}"
+    echo -e "用 户 名: ${GREEN}$auth_user${NC}"
+    echo -e "密    码: ${GREEN}$auth_pass${NC}"
+    echo -e "域    名: ${GREEN}$domain${NC}"   
+}
 
 function Direct_install() {
     install_dependencies
@@ -751,6 +1285,45 @@ function Shadowsocks_install() {
     systemctl start sing-box
     Shadowsocks_extract_config_info
 }
+
+function NaiveProxy_install() {
+    install_dependencies
+    enable_bbr
+    install_go
+    install_caddy
+    check_caddy_folder
+    caddy_listen_port
+    generate_caddy_auth_user
+    generate_caddy_auth_pass
+    get_caddy_fake_site
+    get_caddy_domain    
+    create_caddy_config
+    check_firewall_configuration    
+    test_caddy_config
+    configure_caddy_service
+    systemctl daemon-reload 
+    systemctl enable caddy
+    systemctl start caddy
+    systemctl reload caddy
+    NaiveProxy_extract_config_info
+}
+
+function install_tuic_Serve() {
+    install_dependencies
+    enable_bbr
+    create_tuic_directory   
+    download_tuic
+    generate_tuic_config
+    check_firewall_configuration 
+    ask_certificate_option
+    configure_tuic_service
+    systemctl daemon-reload
+    systemctl enable tuic.service
+    systemctl start tuic.service
+    systemctl restart tuic.service
+    display_tuic_config
+}
+
 
 # 主菜单
 function main_menu() {
@@ -796,35 +1369,35 @@ function main_menu() {
                 Shadowsocks_install
                 ;;
             6)
-                resta
+                NaiveProxy_install
                 ;;
             7)
-                unin
+                install_tuic_Serve
                 ;;                
             8)
                 unins
                 ;;
 
             9)
-                unins
-                ;;
-            10)
                 Direct_install
                 ;;
+            10)
+                restart_naiveproxy_service
+                ;;
             11)
-                restart_sing_box_service
+                restart_naiveproxy_service
                 ;;
             12)
-                unin
+                restart_tuic
                 ;;
             13)
-                unin
-                ;;
-            14)
                 uninstall_sing_box
                 ;;
+            14)
+                uninstall_naiveproxy
+                ;;
             15)
-                unin
+                uninstall_tuic
                 ;;           
             0)
                 echo -e "${GREEN}感谢使用 Reality 安装脚本！再见！${NC}"
