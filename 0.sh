@@ -24,22 +24,28 @@ install_dependencies() {
         exit 1
     fi
 
-    if ! command -v $dependencies &> /dev/null; then
-        echo "下载并安装依赖..."
-        if command -v apt-get &> /dev/null; then
-            sudo apt-get update
-            sudo apt-get install -y $dependencies
-        elif command -v dnf &> /dev/null; then
-            sudo dnf install -y $dependencies
-        elif command -v yum &> /dev/null; then
-            sudo yum install -y $dependencies
-        fi
-
-        echo "依赖已安装。"
-    else
-        echo "依赖已经安装，跳过安装步骤。"
+    echo "更新软件包列表..."
+    if command -v apt-get &> /dev/null; then
+        apt-get update
+    elif command -v dnf &> /dev/null; then
+        dnf makecache
+    elif command -v yum &> /dev/null; then
+        yum makecache
     fi
+
+    echo "下载并安装依赖..."
+    if command -v apt-get &> /dev/null; then
+        apt-get install -y $dependencies
+    elif command -v dnf &> /dev/null; then
+        dnf install -y $dependencies
+    elif command -v yum &> /dev/null; then
+        yum install -y $dependencies
+    fi
+
+    echo "依赖已安装。"
 }
+
+
 
 # 检查防火墙配置
 function check_firewall_configuration() {
