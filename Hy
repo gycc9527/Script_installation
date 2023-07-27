@@ -1,0 +1,434 @@
+# 函数：根据系统版本自动安装依赖
+install_dependencies() {
+    local os_version
+    os_version=$(lsb_release -si 2>/dev/null)
+
+    local dependencies
+    local common_dependencies="wget tar socat jq git openssl"
+
+    case "$os_version" in
+        Debian|Ubuntu)
+            dependencies="$common_dependencies uuid-runtime build-essential zlib1g-dev libssl-dev libevent-dev"
+            ;;
+        CentOS)
+            dependencies="$common_dependencies util-linux gcc-c++ zlib-devel openssl-devel libevent-devel"
+            ;;
+        *)
+            echo "不支持的操作系统: $os_version"
+            exit 1
+            ;;
+    esac
+
+    if ! command -v apt-get &> /dev/null && ! command -v dnf &> /dev/null && ! command -v yum &> /dev/null; then
+        echo "不支持的包管理器，无法继续安装依赖。"
+        exit 1
+    fi
+
+    echo "更新软件包列表..."
+    if command -v apt-get &> /dev/null; then
+        apt-get update
+    elif command -v dnf &> /dev/null; then
+        dnf makecache
+    elif command -v yum &> /dev/null; then
+        yum makecache
+    fi
+
+    echo "下载并安装依赖..."
+    if command -v apt-get &> /dev/null; then
+        apt-get install -y $dependencies
+    elif command -v dnf &> /dev/null; then
+        dnf install -y $dependencies
+    elif command -v yum &> /dev/null; then
+        yum install -y $dependencies
+    fi
+
+    echo "依赖已安装。"
+}
+
+
+
+# 检查防火墙配置
+function check_firewall_configuration() {
+    local os_name=$(uname -s)
+    local firewall
+
+    if [[ $os_name == "Linux" ]]; then
+        if command -v ufw >/dev/null 2>&1 && ufw status | grep -q "Status: active"; then
+            firewall="ufw"
+        elif command -v iptables >/dev/null 2>&1 && iptables -S | grep -q "INPUT -j DROP"; then
+            firewall="iptables"
+        elif command -v firewalld >/dev/null 2>&1 && firewall-cmd --state | grep -q "running"; then
+            firewall="firewalld"
+        fi
+    fi
+
+    if [[ -z $firewall ]]; then
+        echo "未检测到防火墙配置或防火墙未启用，跳过配置防火墙。"
+        return
+    fi
+
+    echo "检查防火墙配置..."
+
+    case $firewall in
+        ufw)
+            if ! ufw status | grep -q "Status: active"; then
+                ufw enable
+            fi
+
+            if ! ufw status | grep -q " $listen_port"; then
+                ufw allow "$listen_port"
+            fi
+
+            if ! ufw status | grep -q " $override_port"; then
+                ufw allow "$override_port"
+            fi
+
+            if ! ufw status | grep -q " 80"; then
+                ufw allow 80
+            fi
+
+            echo "防火墙配置已更新。"
+            ;;
+       iptables)
+            if ! iptables -C INPUT -p tcp --dport "$listen_port" -j ACCEPT >/dev/null 2>&1; then
+                iptables -A INPUT -p tcp --dport "$listen_port" -j ACCEPT
+            fi
+
+            if ! iptables -C INPUT -p udp --dport "$listen_port" -j ACCEPT >/dev/null 2>&1; then
+                iptables -A INPUT -p udp --dport "$listen_port" -j ACCEPT
+            fi
+
+            if ! iptables -C INPUT -p tcp --dport "$override_port" -j ACCEPT >/dev/null 2>&1; then
+                iptables -A INPUT -p tcp --dport "$override_port" -j ACCEPT
+            fi
+
+            if ! iptables -C INPUT -p udp --dport "$override_port" -j ACCEPT >/dev/null 2>&1; then
+                iptables -A INPUT -p udp --dport "$override_port" -j ACCEPT
+            fi
+
+            if ! iptables -C INPUT -p tcp --dport 80 -j ACCEPT >/dev/null 2>&1; then
+                iptables -A INPUT -p tcp --dport 80 -j ACCEPT
+            fi
+
+            if ! iptables -C INPUT -p udp --dport 80 -j ACCEPT >/dev/null 2>&1; then
+                iptables -A INPUT -p udp --dport 80 -j ACCEPT
+            fi
+
+            iptables-save > /etc/sysconfig/iptables
+
+            echo "iptables防火墙配置已更新。"
+            ;;
+        firewalld)
+            if ! firewall-cmd --zone=public --list-ports | grep -q "$listen_port/tcp"; then
+                firewall-cmd --zone=public --add-port="$listen_port/tcp" --permanent
+            fi
+
+            if ! firewall-cmd --zone=public --list-ports | grep -q "$listen_port/udp"; then
+                firewall-cmd --zone=public --add-port="$listen_port/udp" --permanent
+            fi
+
+            if ! firewall-cmd --zone=public --list-ports | grep -q "$override_port/tcp"; then
+                firewall-cmd --zone=public --add-port="$override_port/tcp" --permanent
+            fi
+
+            if ! firewall-cmd --zone=public --list-ports | grep -q "$override_port/udp"; then
+                firewall-cmd --zone=public --add-port="$override_port/udp" --permanent
+            fi
+
+            if ! firewall-cmd --zone=public --list-ports | grep -q "80/tcp"; then
+                firewall-cmd --zone=public --add-port=80/tcp --permanent
+            fi
+
+            if ! firewall-cmd --zone=public --list-ports | grep -q "80/udp"; then
+                firewall-cmd --zone=public --add-port=80/udp --permanent
+            fi
+
+            firewall-cmd --reload
+
+            echo "firewalld防火墙配置已更新。"
+            ;;
+    esac
+}
+
+# 检查 sing-box 文件夹是否存在，如果不存在则创建
+function check_sing_box_folder() {
+    local folder="/usr/local/etc/sing-box"
+    if [[ ! -d "$folder" ]]; then
+        mkdir -p "$folder"
+    fi
+}
+
+# 函数：开启 BBR
+enable_bbr() {
+    if ! grep -q "net.core.default_qdisc=fq" /etc/sysctl.conf; then
+        echo "开启 BBR..."
+        echo "net.core.default_qdisc=fq" >> /etc/sysctl.conf
+        echo "net.ipv4.tcp_congestion_control=bbr" >> /etc/sysctl.conf
+        sysctl -p
+        echo "BBR 已开启"
+    else
+        echo "BBR 已经开启，跳过配置。"
+    fi
+}
+
+# 选择安装方式
+function select_sing_box_install_option() {
+    while true; do
+        echo "请选择 sing-box 的安装方式："
+        echo "  [1]. 编译安装sing-box（支持全部功能）"
+        echo "  [2]. 下载安装sing-box（支持部分功能）"
+
+        local install_option
+        read -p "请选择 [1-2]: " install_option
+
+        case $install_option in
+            1)
+                install_go
+                compile_install_sing_box
+                break
+                ;;
+            2)
+                install_latest_sing_box
+                break
+                ;;
+            *)
+                echo "无效的选择，请重新输入。"
+                ;;
+        esac
+    done
+}
+
+# 函数：检查并安装 Go
+install_go() {
+    if ! command -v go &> /dev/null; then
+        echo "下载并安装 Go..."
+        local go_arch
+        case $(uname -m) in
+            x86_64)
+                go_arch="amd64"
+                ;;
+            i686)
+                go_arch="386"
+                ;;
+            aarch64)
+                go_arch="arm64"
+                ;;
+            armv6l)
+                go_arch="armv6l"
+                ;;
+            *)
+                echo "不支持的架构: $(uname -m)"
+                exit 1
+                ;;
+        esac
+
+        # 获取最新版本的 Go 下载链接
+        local go_version
+        go_version=$(curl -sL "https://golang.org/VERSION?m=text")
+        local go_download_url="https://go.dev/dl/$go_version.linux-$go_arch.tar.gz"
+
+        # 假定 wget 已经安装，直接下载安装包
+        wget -c "$go_download_url" -O - | tar -xz -C /usr/local
+        echo 'export PATH=$PATH:/usr/local/go/bin' |  tee -a /etc/profile
+        source /etc/profile
+        go version
+        
+        echo "Go 已安装"
+    else
+        echo "Go 已经安装，跳过安装步骤。"
+    fi
+}
+
+#编译安装sing-box
+function compile_install_sing_box() {
+    local go_install_command="go install -v -tags \
+with_quic,\
+with_grpc,\
+with_dhcp,\
+with_wireguard,\
+with_shadowsocksr,\
+with_ech,\
+with_utls,\
+with_reality_server,\
+with_acme,\
+with_clash_api,\
+with_v2ray_api,\
+with_gvisor,\
+with_lwip \
+github.com/sagernet/sing-box/cmd/sing-box@latest"
+
+    echo "正在编译安装 sing-box，请稍候..."
+    $go_install_command
+
+    if [[ $? -eq 0 ]]; then
+        mv ~/go/bin/sing-box /usr/local/bin/
+        chmod +x /usr/local/bin/sing-box
+        echo "sing-box 编译安装成功"
+    else
+        echo "sing-box 编译安装失败"
+        exit 1
+    fi
+}
+
+# 下载并安装最新的 Sing-Box 版本
+function install_latest_sing_box() {
+    local arch=$(uname -m)
+    local url="https://api.github.com/repos/SagerNet/sing-box/releases/latest"
+    local download_url
+
+    # 根据 VPS 架构确定合适的下载 URL
+    case $arch in
+        x86_64)
+            download_url=$(curl -s $url | grep -o "https://github.com[^\"']*linux-amd64.tar.gz")
+            ;;
+        armv7l)
+            download_url=$(curl -s $url | grep -o "https://github.com[^\"']*linux-armv7.tar.gz")
+            ;;
+        aarch64)
+            download_url=$(curl -s $url | grep -o "https://github.com[^\"']*linux-arm64.tar.gz")
+            ;;
+        amd64v3)
+            download_url=$(curl -s $url | grep -o "https://github.com[^\"']*linux-amd64v3.tar.gz")
+            ;;
+        *)
+            echo -e "${RED}不支持的架构：$arch${NC}"
+            return 1
+            ;;
+    esac
+
+    # 下载并安装 Sing-Box
+    if [ -n "$download_url" ]; then
+        echo "正在下载 Sing-Box..."
+        curl -L -o sing-box.tar.gz "$download_url"
+        tar -xzf sing-box.tar.gz -C /usr/local/bin --strip-components=1
+        rm sing-box.tar.gz
+
+        # 赋予可执行权限
+        chmod +x /usr/local/bin/sing-box
+
+        echo "Sing-Box 安装成功！"
+    else
+        echo -e "${RED}无法获取 Sing-Box 的下载 URL。${NC}"
+        return 1
+    fi
+}
+
+# 配置 sing-box 开机自启服务
+function configure_sing_box_service() {
+    echo "配置 sing-box 开机自启服务..."
+    local service_file="/etc/systemd/system/sing-box.service"
+
+    if [[ -f $service_file ]]; then
+        rm "$service_file"
+    fi
+    
+       local service_config='[Unit]
+Description=sing-box service
+Documentation=https://sing-box.sagernet.org
+After=network.target nss-lookup.target
+
+[Service]
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
+ExecStart=/usr/local/bin/sing-box run -c /usr/local/etc/sing-box/config.json
+Restart=on-failure
+RestartSec=1800s
+LimitNOFILE=infinity
+
+[Install]
+WantedBy=multi-user.target'
+
+        echo "$service_config" >"$service_file"
+        echo "sing-box 开机自启动服务已配置。"
+        systemctl daemon-reload
+}
+
+# 函数：读取监听端口
+function hysteria_listen_port() {
+    while true; do
+        read -p "请输入监听端口 (默认443): " listen_port
+        listen_port=${listen_port:-443}
+
+        if [[ $listen_port =~ ^[1-9][0-9]{0,4}$ && $listen_port -le 65535 ]]; then
+            break
+        else
+            echo "错误：监听端口范围必须在1-65535之间，请重新输入。"
+        fi
+    done
+}
+
+# 函数：读取速度
+function read_speed() {
+    local default_speed=$1
+    local speed_name=$2
+
+    while true; do
+        read -p "请输入$speed_name (默认$default_speed): " speed
+        speed=${speed:-$default_speed}
+
+        if [[ $speed =~ ^[0-9]+$ ]]; then
+            echo "$speed_name 设置成功：$speed"
+            break
+        else
+            echo "错误：请输入一个有效的数字。"
+        fi
+    done
+}
+
+# 函数：读取混淆密码
+function read_obfs_password() {
+    read -p "请输入混淆密码 (默认随机生成): " obfs_password
+
+    if [[ -z "$obfs_password" ]]; then
+        obfs_password=$(openssl rand -base64 8)
+    else
+        echo "混淆密码设置成功：$obfs_password"
+    fi
+}
+
+# 函数：读取认证密码
+function read_auth_password() {
+    read -p "请输入认证密码 (默认随机生成): " auth_password
+
+    if [[ -z "$auth_password" ]]; then
+        auth_password=$(openssl rand -base64 10)
+    else
+        echo "认证密码设置成功：$auth_password"
+    fi
+}
+# 函数：读取多个用户信息
+function read_users_info() {
+    local users=""
+    local auth_str=""
+
+    while true; do
+        read_auth_password
+
+        if [[ -z "$users" ]]; then
+            users="{\n  \"auth_str\": \"$auth_password\"\n}"
+        else
+            users+=",\n{\n  \"auth_str\": \"$auth_password\"\n}"
+        fi
+
+        read -p "是否继续添加用户？(Y/N): " add_more
+
+        if [[ "$add_more" != "Y" && "$add_more" != "y" ]]; then
+            break
+        fi
+    done
+}
+
+# 函数：读取域名并验证是否解析
+function read_domain() {
+    while true; do
+        read -p "请输入您的域名: " domain
+
+        # 检查域名是否绑定本机IP
+        if ping -c 1 "$domain" &>/dev/null; then
+            echo "域名验证通过。"
+            break
+        else
+            echo "错误：域名未解析或输入错误，请重新输入。"
+        fi
+    done
+}
