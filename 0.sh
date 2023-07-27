@@ -141,25 +141,29 @@ enable_bbr() {
 
 # 选择安装方式
 function select_sing_box_install_option() {
-    echo "请选择 sing-box 的安装方式："
-    echo "  [1]. 编译安装sing-box（支持全部功能）"
-    echo "  [2]. 下载安装sing-box（支持部分功能）"
+    while true; do
+        echo "请选择 sing-box 的安装方式："
+        echo "  [1]. 编译安装sing-box（支持全部功能）"
+        echo "  [2]. 下载安装sing-box（支持部分功能）"
 
-    local install_option
-    read -p "请选择 [1-2]: " install_option
+        local install_option
+        read -p "请选择 [1-2]: " install_option
 
-    case $install_option in
-        1)
-            install_go
-            compile_install_sing_box
-            ;;
-        2)
-            install_latest_sing_box
-            ;;
-        *)
-            echo "无效的选择，请重新输入。"
-            ;;
-    esac
+        case $install_option in
+            1)
+                install_go
+                compile_install_sing_box
+                break
+                ;;
+            2)
+                install_latest_sing_box
+                break
+                ;;
+            *)
+                echo "无效的选择，请重新输入。"
+                ;;
+        esac
+    done
 }
 
 # 函数：检查并安装 Go
@@ -205,13 +209,27 @@ install_go() {
 
 #编译安装sing-box
 function compile_install_sing_box() {
-    sing_box_version=$(go list -m -versions github.com/sagernet/sing-box/cmd/sing-box | tail -1)
+    local go_install_command="go install -v -tags \
+with_quic,\
+with_grpc,\
+with_dhcp,\
+with_wireguard,\
+with_shadowsocksr,\
+with_ech,\
+with_utls,\
+with_reality_server,\
+with_acme,\
+with_clash_api,\
+with_v2ray_api,\
+with_gvisor,\
+with_lwip \
+github.com/sagernet/sing-box/cmd/sing-box@latest"
 
-    go install -v -tags "with_dhcp@${sing_box_version},with_dhcp,with_wireguard@${sing_box_version},with_ech@${sing_box_version},with_utls@${sing_box_version},with_clash_api@${sing_box_version},with_v2ray_api@${sing_box_version},with_gvisor@${sing_box_version},with_lwip@${sing_box_version}" \
-        github.com/sagernet/sing-box/cmd/sing-box@latest
+    echo "正在编译安装 sing-box，请稍候..."
+    $go_install_command
 
     if [[ $? -eq 0 ]]; then
-        cp ~/go/bin/sing-box /usr/local/bin/
+        mv ~/go/bin/sing-box /usr/local/bin/
         chmod +x /usr/local/bin/sing-box
         echo "sing-box 编译安装成功"
     else
@@ -526,17 +544,68 @@ function Direct_write_config_file() {
     echo "配置文件 $config_file 写入成功。"
 }
 
-function Direct_install() {
-
+# 安装 sing-box
+function install_sing_box() {
     install_dependencies
     enable_bbr
     select_sing_box_install_option
+    configure_sing_box_service
+}
+
+# 停止 sing-box 服务
+function stop_sing_box_service() {
+    echo "停止 sing-box 服务..."
+    systemctl stop sing-box
+
+    if [[ $? -eq 0 ]]; then
+        echo "sing-box 服务已停止。"
+    else
+        echo -e "${RED}停止 sing-box 服务失败。${NC}"
+    fi
+}
+
+# 重启 sing-box 服务
+function restart_sing_box_service() {
+    echo "重启 sing-box 服务..."
+    systemctl restart sing-box
+
+    if [[ $? -eq 0 ]]; then
+        echo "sing-box 服务已重启。"
+    else
+        echo -e "${RED}重启 sing-box 服务失败。${NC}"
+    fi
+}
+
+# 查看 sing-box 服务日志
+function view_sing_box_log() {
+    echo "正在查看 sing-box 服务日志..."
+    journalctl -u sing-box -f
+}
+
+# 卸载 sing-box
+function uninstall_sing_box() {
+    echo "开始卸载 sing-box..."
+
+    stop_sing_box_service
+
+    # 删除文件和文件夹
+    echo "删除文件和文件夹..."
+    rm -rf /usr/local/bin/sing-box
+    rm -rf /usr/local/etc/sing-box
+    rm -rf /etc/systemd/system/sing-box.service
+
+    echo "sing-box 卸载完成。"
+}
+
+function Direct_install() {
+
+    install_sing_box
     generate_listen_port_config
     Direct_override_address
     Direct_override_port
     Direct_write_config_file
     check_firewall_configuration
-    configure_sing_box_service
+    systemctl start sing-box
 }
 
 # 主菜单
@@ -546,7 +615,7 @@ echo -e "${GREEN}               |                          欢迎使用 Reality 
 echo -e "${GREEN}               |                      项目地址:https://github.com/TinrLin                         |${NC}"
 echo -e "${GREEN}               ------------------------------------------------------------------------------------${NC}"
     echo -e "${CYAN}请选择要执行的操作：${NC}"
-    echo -e "  ${CYAN}[1]. sing-box 流量中转${NC}"
+    echo -e "  ${CYAN}[1]. 安装 sing-box 服务${NC}"
     echo -e "  ${CYAN}[2]. 停止 sing-box 服务${NC}"
     echo -e "  ${CYAN}[3]. 重启 sing-box 服务${NC}"
     echo -e "  ${CYAN}[4]. 查看 sing-box 日志${NC}"
@@ -558,7 +627,7 @@ echo -e "${GREEN}               ------------------------------------------------
 
     case $choice in
         1)
-            Direct_install
+            install_sing_box
             ;;
         2)
             stop_sing_box_service
