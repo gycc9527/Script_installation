@@ -43,7 +43,6 @@ install_dependencies() {
 
 # 检查防火墙配置
 function check_firewall_configuration() {
-    local listen_port=$(jq -r '.inbounds[0].listen_port' /usr/local/etc/sing-box/config.json)
     local os_name=$(uname -s)
     local firewall
 
@@ -56,7 +55,7 @@ function check_firewall_configuration() {
     fi
 
     if [[ -z $firewall ]]; then
-        echo -e "${RED}无法检测到适用的防火墙配置工具，请手动配置防火墙。${NC}"
+        echo "无法检测到适用的防火墙配置工具，请手动配置防火墙。"
         return
     fi
 
@@ -68,8 +67,12 @@ function check_firewall_configuration() {
                 ufw enable
             fi
 
-            if ! ufw status | grep -q "$listen_port"; then
+            if ! ufw status | grep -q " $listen_port"; then
                 ufw allow "$listen_port"
+            fi
+
+            if ! ufw status | grep -q " 80"; then
+                ufw allow 80
             fi
 
             echo "防火墙配置已更新。"
@@ -78,6 +81,10 @@ function check_firewall_configuration() {
             if command -v iptables >/dev/null 2>&1; then
                 if ! iptables -C INPUT -p tcp --dport "$listen_port" -j ACCEPT >/dev/null 2>&1; then
                     iptables -A INPUT -p tcp --dport "$listen_port" -j ACCEPT
+                fi
+
+                if ! iptables -C INPUT -p tcp --dport 80 -j ACCEPT >/dev/null 2>&1; then
+                    iptables -A INPUT -p tcp --dport 80 -j ACCEPT
                 fi
 
                 iptables-save > /etc/sysconfig/iptables
@@ -99,6 +106,10 @@ function check_firewall_configuration() {
                     firewall-cmd --zone=public --add-port="$listen_port/udp" --permanent
                 fi
 
+                if ! firewall-cmd --zone=public --list-ports | grep -q "80/tcp"; then
+                    firewall-cmd --zone=public --add-port=80/tcp --permanent
+                fi
+
                 firewall-cmd --reload
 
                 echo "firewalld防火墙配置已更新。"
@@ -107,25 +118,11 @@ function check_firewall_configuration() {
     esac
 }
 
-# 检查是否存在文件夹，不存在则创建
-function check_and_create_folder() {
-    local folder=$1
-    if [ ! -d "$folder" ]; then
+# 检查 sing-box 文件夹是否存在，如果不存在则创建
+function check_sing_box_folder() {
+    local folder="/usr/local/etc/sing-box"
+    if [[ ! -d "$folder" ]]; then
         mkdir -p "$folder"
-        echo -e "${GREEN}创建 $folder 成功。${NC}"
-    else
-        echo -e "${YELLOW}$folder 已存在，跳过创建。${NC}"
-    fi
-}
-
-# 检查是否存在文件，不存在则创建
-function check_and_create_file() {
-    local file=$1
-    if [ ! -f "$file" ]; then
-        touch "$file"
-        echo -e "${GREEN}创建 $file 成功。${NC}"
-    else
-        echo -e "${YELLOW}$file 已存在，跳过创建。${NC}"
     fi
 }
 
@@ -136,10 +133,33 @@ enable_bbr() {
         echo "net.core.default_qdisc=fq" >> /etc/sysctl.conf
         echo "net.ipv4.tcp_congestion_control=bbr" >> /etc/sysctl.conf
         sysctl -p
-        echo -e "${GREEN}BBR 已开启${NC}"
+        echo "BBR 已开启"
     else
-        echo -e "${YELLOW}BBR 已经开启，跳过配置。${NC}"
+        echo "BBR 已经开启，跳过配置。"
     fi
+}
+
+# 选择安装方式
+function select_sing_box_install_option() {
+    echo "请选择 sing-box 的安装方式："
+    echo "  [1]. 编译安装sing-box（支持全部功能）"
+    echo "  [2]. 下载安装sing-box（支持部分功能）"
+
+    local install_option
+    read -p "请选择 [1-2]: " install_option
+
+    case $install_option in
+        1)
+            install_go
+            compile_install_sing_box
+            ;;
+        2)
+            install_latest_sing_box
+            ;;
+        *)
+            echo "无效的选择，请重新输入。"
+            ;;
+    esac
 }
 
 # 函数：检查并安装 Go
@@ -404,13 +424,164 @@ WantedBy=multi-user.target'
         echo "TUIC 开机自启动服务已配置。"
 }
 
+# 监听端口配置
+function generate_listen_port_config() {
+    local listen_port
 
+    while true; do
+        read -p "请输入监听端口 (默认为 443): " listen_port
+        listen_port=${listen_port:-443}
 
+        if ! [[ "$listen_port" =~ ^[1-9][0-9]{0,4}$ || "$listen_port" == "443" ]]; then
+            echo "错误：端口范围1-65535，请重新输入！" >&2
+        else
+            break
+        fi
+    done
 
+    echo "$listen_port"
+}
 
+# 函数：读取目标地址
+function Direct_override_address() {
+    local is_valid_address=false
 
+    while [[ "$is_valid_address" == "false" ]]; do
+        read -p "请输入目标地址: " override_address
 
+        # 使用正则表达式检查是否为合法的 IPv4 地址
+        if [[ $override_address =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+            # 检查每个字段是否在 0 到 255 之间
+            IFS='.' read -r -a address_fields <<< "$override_address"
+            is_valid_ip=true
+            for field in "${address_fields[@]}"; do
+                if [[ "$field" -lt 0 || "$field" -gt 255 ]]; then
+                    is_valid_ip=false
+                    break
+                fi
+            done
 
+            if [[ "$is_valid_ip" == "true" ]]; then
+                is_valid_address=true
+            else
+                echo "错误：IP地址字段必须在0到255之间，请重新输入。"
+            fi
+        else
+            echo "错误：请输入合法的IPv4地址，格式为 0.0.0.0。"
+        fi
+    done
+}
 
+# 函数：读取目标端口
+function Direct_override_port() {
+    while true; do
+        read -p "请输入目标端口 (默认443): " override_port
+        override_port=${override_port:-443}
 
+        if [[ $override_port =~ ^[1-9][0-9]{0,4}$ && $override_port -le 65535 ]]; then
+            break
+        else
+            echo "错误：目标端口范围必须在1-65535之间，请重新输入。"
+        fi
+    done
+}
+
+# 函数：写入配置文件
+function Direct_write_config_file() {
+    local config_file="/usr/local/etc/sing-box/config.json"
+
+    echo "{
+  \"log\": {
+    \"disabled\": false,
+    \"level\": "info",
+    \"timestamp\": true
+  },
+  \"inbounds\": [
+    {
+      \"type\": \"direct\",
+      \"tag\": \"direct-in\",
+      \"listen\": \"0.0.0.0\",
+      \"listen_port\": $listen_port,
+      \"sniff\": true,
+      \"sniff_override_destination\": true,
+      \"sniff_timeout\": \"300ms\",
+      \"proxy_protocol\": false,
+      \"network\": \"tcp\",
+      \"override_address\": \"$override_address\",
+      \"override_port\": $override_port
+    }
+  ],
+  \"outbounds\": [
+    {
+      \"type\": \"direct\",
+      \"tag\": \"direct\"
+    },
+    {
+      \"type\": \"block\",
+      \"tag\": \"block\"
+    }
+  ]
+}" > "$config_file"
+
+    echo "配置文件 $config_file 写入成功。"
+}
+
+function Direct_install() {
+
+    install_dependencies
+    enable_bbr
+    select_sing_box_install_option
+    generate_listen_port_config
+    Direct_override_address
+    Direct_override_port
+    Direct_write_config_file
+    check_firewall_configuration
+    configure_sing_box_service
+}
+
+# 主菜单
+function main_menu() {
+echo -e "${GREEN}               ------------------------------------------------------------------------------------ ${NC}"
+echo -e "${GREEN}               |                          欢迎使用 Reality 安装程序                               |${NC}"
+echo -e "${GREEN}               |                      项目地址:https://github.com/TinrLin                         |${NC}"
+echo -e "${GREEN}               ------------------------------------------------------------------------------------${NC}"
+    echo -e "${CYAN}请选择要执行的操作：${NC}"
+    echo -e "  ${CYAN}[1]. sing-box 流量中转${NC}"
+    echo -e "  ${CYAN}[2]. 停止 sing-box 服务${NC}"
+    echo -e "  ${CYAN}[3]. 重启 sing-box 服务${NC}"
+    echo -e "  ${CYAN}[4]. 查看 sing-box 日志${NC}"
+    echo -e "  ${CYAN}[5]. 卸载 sing-box 服务${NC}"
+    echo -e "  ${CYAN}[0]. 退出脚本${NC}"
+
+    local choice
+    read -p "请选择 [1-6]: " choice
+
+    case $choice in
+        1)
+            Direct_install
+            ;;
+        2)
+            stop_sing_box_service
+            ;;
+        3)
+            restart_sing_box_service
+            ;;
+        4)
+            view_sing_box_log
+            ;;
+        5)
+            uninstall_sing_box
+            ;;
+        0)
+            echo -e "${GREEN}感谢使用 Reality 安装脚本！再见！${NC}"
+            exit 0
+            ;;
+        *)
+            echo -e "${RED}无效的选择，请重新输入。${NC}"
+            main_menu
+            ;;
+    esac
+}
+
+main_menu
 
