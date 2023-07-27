@@ -47,19 +47,22 @@ function check_firewall_configuration() {
     local firewall
 
     if [[ $os_name == "Linux" ]]; then
-        if command -v ufw >/dev/null 2>&1 && command -v iptables >/dev/null 2>&1; then
+        if command -v ufw >/dev/null 2>&1 && ufw status | grep -q "Status: active"; then
             firewall="ufw"
-        elif command -v iptables >/dev/null 2>&1 && command -v firewalld >/dev/null 2>&1; then
-            firewall="iptables-firewalld"
+        elif command -v iptables >/dev/null 2>&1 && iptables -S | grep -q "INPUT -j DROP"; then
+            firewall="iptables"
+        elif command -v firewalld >/dev/null 2>&1 && firewall-cmd --state | grep -q "running"; then
+            firewall="firewalld"
         fi
     fi
 
     if [[ -z $firewall ]]; then
-        echo "无法检测到适用的防火墙配置工具，请手动配置防火墙。"
+        echo "未检测到防火墙配置或防火墙未启用，跳过配置防火墙。"
         return
     fi
 
     echo "检查防火墙配置..."
+
 
     case $firewall in
         ufw)
@@ -77,46 +80,52 @@ function check_firewall_configuration() {
 
             echo "防火墙配置已更新。"
             ;;
-        iptables-firewalld)
-            if command -v iptables >/dev/null 2>&1; then
-                if ! iptables -C INPUT -p tcp --dport "$listen_port" -j ACCEPT >/dev/null 2>&1; then
-                    iptables -A INPUT -p tcp --dport "$listen_port" -j ACCEPT
-                fi
-
-                if ! iptables -C INPUT -p tcp --dport 80 -j ACCEPT >/dev/null 2>&1; then
-                    iptables -A INPUT -p tcp --dport 80 -j ACCEPT
-                fi
-
-                iptables-save > /etc/sysconfig/iptables
-
-                echo "iptables防火墙配置已更新。"
+       iptables)
+            if ! iptables -C INPUT -p tcp --dport "$listen_port" -j ACCEPT >/dev/null 2>&1; then
+                iptables -A INPUT -p tcp --dport "$listen_port" -j ACCEPT
             fi
 
-            if command -v firewalld >/dev/null 2>&1; then
-                if ! firewall-cmd --state | grep -q "running"; then
-                    systemctl start firewalld
-                    systemctl enable firewalld
-                fi
-
-                if ! firewall-cmd --zone=public --list-ports | grep -q "$listen_port/tcp"; then
-                    firewall-cmd --zone=public --add-port="$listen_port/tcp" --permanent
-                fi
-
-                if ! firewall-cmd --zone=public --list-ports | grep -q "$listen_port/udp"; then
-                    firewall-cmd --zone=public --add-port="$listen_port/udp" --permanent
-                fi
-
-                if ! firewall-cmd --zone=public --list-ports | grep -q "80/tcp"; then
-                    firewall-cmd --zone=public --add-port=80/tcp --permanent
-                fi
-
-                firewall-cmd --reload
-
-                echo "firewalld防火墙配置已更新。"
+            if ! iptables -C INPUT -p udp --dport "$listen_port" -j ACCEPT >/dev/null 2>&1; then
+                iptables -A INPUT -p udp --dport "$listen_port" -j ACCEPT
             fi
+
+            if ! iptables -C INPUT -p tcp --dport 80 -j ACCEPT >/dev/null 2>&1; then
+                iptables -A INPUT -p tcp --dport 80 -j ACCEPT
+            fi
+
+            if ! iptables -C INPUT -p udp --dport 80 -j ACCEPT >/dev/null 2>&1; then
+                iptables -A INPUT -p udp --dport 80 -j ACCEPT
+            fi
+
+            iptables-save > /etc/sysconfig/iptables
+
+            echo "iptables防火墙配置已更新。"
+            ;;
+        firewalld)
+            if ! firewall-cmd --zone=public --list-ports | grep -q "$listen_port/tcp"; then
+                firewall-cmd --zone=public --add-port="$listen_port/tcp" --permanent
+            fi
+
+            if ! firewall-cmd --zone=public --list-ports | grep -q "$listen_port/udp"; then
+                firewall-cmd --zone=public --add-port="$listen_port/udp" --permanent
+            fi
+
+            if ! firewall-cmd --zone=public --list-ports | grep -q "80/tcp"; then
+                firewall-cmd --zone=public --add-port=80/tcp --permanent
+            fi
+
+            if ! firewall-cmd --zone=public --list-ports | grep -q "80/udp"; then
+                firewall-cmd --zone=public --add-port=80/udp --permanent
+            fi
+
+            firewall-cmd --reload
+
+            echo "firewalld防火墙配置已更新。"
             ;;
     esac
 }
+
+
 
 # 检查 sing-box 文件夹是否存在，如果不存在则创建
 function check_sing_box_folder() {
@@ -376,6 +385,7 @@ WantedBy=multi-user.target'
 
         echo "$service_config" >"$service_file"
         echo "sing-box 开机自启动服务已配置。"
+        systemctl daemon-reload
 }
 
 # 函数：配置 Caddy 自启动服务
@@ -442,22 +452,18 @@ WantedBy=multi-user.target'
         echo "TUIC 开机自启动服务已配置。"
 }
 
-# 监听端口配置
-function generate_listen_port_config() {
-    local listen_port
-
+# 函数：读取监听端口
+function Direct_listen_port() {
     while true; do
-        read -p "请输入监听端口 (默认为 443): " listen_port
+        read -p "请输入监听端口 (默认443): " listen_port
         listen_port=${listen_port:-443}
 
-        if ! [[ "$listen_port" =~ ^[1-9][0-9]{0,4}$ || "$listen_port" == "443" ]]; then
-            echo "错误：端口范围1-65535，请重新输入！" >&2
-        else
+        if [[ $listen_port =~ ^[1-9][0-9]{0,4}$ && $listen_port -le 65535 ]]; then
             break
+        else
+            echo "错误：监听端口范围必须在1-65535之间，请重新输入。"
         fi
     done
-
-    echo "$listen_port"
 }
 
 # 函数：读取目标地址
@@ -511,7 +517,7 @@ function Direct_write_config_file() {
     echo "{
   \"log\": {
     \"disabled\": false,
-    \"level\": "info",
+    \"level\": \"info\",
     \"timestamp\": true
   },
   \"inbounds\": [
@@ -544,25 +550,9 @@ function Direct_write_config_file() {
     echo "配置文件 $config_file 写入成功。"
 }
 
-# 安装 sing-box
-function install_sing_box() {
-    install_dependencies
-    enable_bbr
-    select_sing_box_install_option
-    configure_sing_box_service
-}
 
-# 停止 sing-box 服务
-function stop_sing_box_service() {
-    echo "停止 sing-box 服务..."
-    systemctl stop sing-box
 
-    if [[ $? -eq 0 ]]; then
-        echo "sing-box 服务已停止。"
-    else
-        echo -e "${RED}停止 sing-box 服务失败。${NC}"
-    fi
-}
+
 
 # 重启 sing-box 服务
 function restart_sing_box_service() {
@@ -574,83 +564,127 @@ function restart_sing_box_service() {
     else
         echo -e "${RED}重启 sing-box 服务失败。${NC}"
     fi
+
+    systemctl status sing-box
 }
 
-# 查看 sing-box 服务日志
-function view_sing_box_log() {
-    echo "正在查看 sing-box 服务日志..."
-    journalctl -u sing-box -f
-}
+
 
 # 卸载 sing-box
 function uninstall_sing_box() {
     echo "开始卸载 sing-box..."
 
-    stop_sing_box_service
+    systemctl stop sing-box
 
     # 删除文件和文件夹
     echo "删除文件和文件夹..."
     rm -rf /usr/local/bin/sing-box
     rm -rf /usr/local/etc/sing-box
     rm -rf /etc/systemd/system/sing-box.service
+    systemctl daemon-reload
 
     echo "sing-box 卸载完成。"
 }
 
 function Direct_install() {
 
-    install_sing_box
-    generate_listen_port_config
+    install_dependencies
+    enable_bbr
+    select_sing_box_install_option
+    configure_sing_box_service
+    check_sing_box_folder
+    Direct_listen_port
     Direct_override_address
     Direct_override_port
     Direct_write_config_file
-    check_firewall_configuration
+    check_firewall_configuration    
+    systemctl enable sing-box   
     systemctl start sing-box
 }
 
 # 主菜单
 function main_menu() {
-echo -e "${GREEN}               ------------------------------------------------------------------------------------ ${NC}"
-echo -e "${GREEN}               |                          欢迎使用 Reality 安装程序                               |${NC}"
-echo -e "${GREEN}               |                      项目地址:https://github.com/TinrLin                         |${NC}"
-echo -e "${GREEN}               ------------------------------------------------------------------------------------${NC}"
-    echo -e "${CYAN}请选择要执行的操作：${NC}"
-    echo -e "  ${CYAN}[1]. 安装 sing-box 服务${NC}"
-    echo -e "  ${CYAN}[2]. 停止 sing-box 服务${NC}"
-    echo -e "  ${CYAN}[3]. 重启 sing-box 服务${NC}"
-    echo -e "  ${CYAN}[4]. 查看 sing-box 日志${NC}"
-    echo -e "  ${CYAN}[5]. 卸载 sing-box 服务${NC}"
-    echo -e "  ${CYAN}[0]. 退出脚本${NC}"
+        echo -e "${GREEN}               ------------------------------------------------------------------------------------ ${NC}"
+        echo -e "${GREEN}               |                          欢迎使用 Reality 安装程序                               |${NC}"
+        echo -e "${GREEN}               |                      项目地址:https://github.com/TinrLin                         |${NC}"
+        echo -e "${GREEN}               ------------------------------------------------------------------------------------${NC}"
+        echo -e "${CYAN}请选择要执行的操作：${NC}"
+        echo -e "  ${CYAN}[01]. vless+vision+reality${NC}"
+        echo -e "  ${CYAN}[02]. vless+grpc+reality${NC}"
+        echo -e "  ${CYAN}[03]. vless+h2+reality${NC}"
+        echo -e "  ${CYAN}[04]. ShadowTLS V3${NC}"
+        echo -e "  ${CYAN}[05]. NaiveProxy${NC}"
+        echo -e "  ${CYAN}[06]. TUIC V5${NC}"
+        echo -e "  ${CYAN}[07]. Hysteria${NC}"
+        echo -e "  ${CYAN}[08]. Direct 流量中转${NC}"
+        echo -e "  ${CYAN}[09]. 重启 sing-box 服务${NC}"
+        echo -e "  ${CYAN}[10]. 重启 Caddy 服务${NC}"
+        echo -e "  ${CYAN}[11]. 重启 TUIC 服务${NC}"
+        echo -e "  ${CYAN}[12]. 卸载 sing-box 服务${NC}"
+        echo -e "  ${CYAN}[13]. 卸载 Caddy 服务${NC}"
+        echo -e "  ${CYAN}[14]. 卸载 TUIC 服务${NC}"
+        echo -e "  ${CYAN}[00]. 退出脚本${NC}"
 
-    local choice
-    read -p "请选择 [1-6]: " choice
+        local choice
+        read -p "请选择 [0-14]: " choice
 
-    case $choice in
-        1)
-            install_sing_box
-            ;;
-        2)
-            stop_sing_box_service
-            ;;
-        3)
-            restart_sing_box_service
-            ;;
-        4)
-            view_sing_box_log
-            ;;
-        5)
-            uninstall_sing_box
-            ;;
-        0)
-            echo -e "${GREEN}感谢使用 Reality 安装脚本！再见！${NC}"
-            exit 0
-            ;;
-        *)
-            echo -e "${RED}无效的选择，请重新输入。${NC}"
-            main_menu
-            ;;
-    esac
+        case $choice in
+            1)
+                inst
+                ;;
+            2)
+                stop
+                ;;
+            3)
+                resta
+                ;;
+            4)
+                view
+                ;;
+            5)
+                unins
+                ;;
+            5)
+                unin
+                ;;
+            6)
+                unins
+                ;;
+
+            7)
+                unins
+                ;;
+            8)
+                Direct_install
+                ;;
+            9)
+                restart_sing_box_service
+                ;;
+            10)
+                unin
+                ;;
+            11)
+                unin
+                ;;
+            12)
+                uninstall_sing_box
+                ;;
+            13)
+                unin
+                ;;
+            14)
+                unin
+                ;;               
+            0)
+                echo -e "${GREEN}感谢使用 Reality 安装脚本！再见！${NC}"
+                exit 0
+                ;;
+            *)
+                echo -e "${RED}无效的选择，请重新输入。${NC}"
+                main_menu
+                ;;
+        esac
 }
 
-main_menu
 
+main_menu
