@@ -573,6 +573,95 @@ function Direct_write_config_file() {
     echo "配置文件 $config_file 写入成功。"
 }
 
+# 函数：读取监听端口
+function ss_listen_port() {
+    while true; do
+        read -p "请输入监听端口 (默认443): " listen_port
+        listen_port=${listen_port:-443}
+
+        if [[ $listen_port =~ ^[1-9][0-9]{0,4}$ && $listen_port -le 65535 ]]; then
+            echo "监听端口设置成功：$listen_port"
+            break
+        else
+            echo "错误：监听端口范围必须在1-65535之间，请重新输入。"
+        fi
+    done
+}
+
+# 函数：读取加密方式
+function ss_encryption_method() {
+    while true; do
+        read -p "请选择加密方式：
+[1]. 2022-blake3-aes-128-gcm
+[2]. 2022-blake3-aes-256-gcm
+[3]. 2022-blake3-chacha20-poly1305
+请输入对应的数字 (默认3): " encryption_choice
+        encryption_choice=${encryption_choice:-3}
+
+        case $encryption_choice in
+            1)
+                ss_method="2022-blake3-aes-128-gcm"
+                ss_password=$(sing-box generate rand --base64 16)
+                echo "随机生成的密码：$ss_password"
+                break
+                ;;
+            2)
+                ss_method="2022-blake3-aes-256-gcm"
+                ss_password=$(sing-box generate rand --base64 32)
+                echo "随机生成的密码：$ss_password"
+                break
+                ;;
+            3)
+                ss_method="2022-blake3-chacha20-poly1305"
+                ss_password=$(sing-box generate rand --base64 32)
+                echo "随机生成的密码：$ss_password"
+                break
+                ;;
+            *)
+                echo "错误：无效的选择，请重新输入。"
+                ;;
+        esac
+    done
+}
+
+# 函数：写入sing-box配置文件
+function ss_write_sing_box_config() {
+    local config_file="/usr/local/etc/sing-box/config.json"
+
+    echo "{
+  \"log\": {
+    \"disabled\": false,
+    \"level\": \"info\",
+    \"timestamp\": true
+  },
+  \"inbounds\": [
+    {
+      \"type\": \"shadowsocks\",
+      \"tag\": \"ss-in\",
+      \"listen\": \"::\",
+      \"listen_port\": $listen_port,
+      \"method\": \"$ss_method\",
+      \"password\": \"$ss_password\"
+    }
+  ],
+  \"outbounds\": [
+    {
+      \"type\": \"direct\",
+      \"tag\": \"direct\"
+    },
+    {
+      \"type\": \"block\",
+      \"tag\": \"block\"
+    }
+  ]
+}" > "$config_file"
+
+    echo "配置文件 $config_file 创建成功。"
+}
+
+
+
+
 
 
 
@@ -620,6 +709,18 @@ function Direct_extract_config_info() {
     echo "目标端口: $override_port"
 }
 
+function Shadowsocks_extract_config_info() {
+    local local_ip
+    local_ip=$(curl -s http://ifconfig.me)
+
+    echo "========= 配置完成 ========="
+    echo "本机 IP 地址: $local_ip"
+    echo "监听端口: $listen_port"
+    echo "加密方式: $ss_method"
+    echo "密码: $ss_password"
+}
+
+
 function Direct_install() {
     install_dependencies
     enable_bbr
@@ -636,6 +737,21 @@ function Direct_install() {
     Direct_extract_config_info
 }
 
+function Shadowsocks_install() {
+    install_dependencies
+    enable_bbr
+    select_sing_box_install_option
+    configure_sing_box_service
+    check_sing_box_folder
+    ss_listen_port
+    ss_encryption_method
+    ss_write_sing_box_config
+    check_firewall_configuration    
+    systemctl enable sing-box   
+    systemctl start sing-box
+    Shadowsocks_extract_config_info
+}
+
 # 主菜单
 function main_menu() {
         echo -e "${GREEN}               ------------------------------------------------------------------------------------ ${NC}"
@@ -647,20 +763,21 @@ function main_menu() {
         echo -e "  ${CYAN}[02]. vless+grpc+reality${NC}"
         echo -e "  ${CYAN}[03]. vless+h2+reality${NC}"
         echo -e "  ${CYAN}[04]. ShadowTLS V3${NC}"
-        echo -e "  ${CYAN}[05]. NaiveProxy${NC}"
-        echo -e "  ${CYAN}[06]. TUIC V5${NC}"
-        echo -e "  ${CYAN}[07]. Hysteria${NC}"
-        echo -e "  ${CYAN}[08]. Direct 流量中转${NC}"
-        echo -e "  ${CYAN}[09]. 重启 sing-box 服务${NC}"
-        echo -e "  ${CYAN}[10]. 重启 Caddy 服务${NC}"
-        echo -e "  ${CYAN}[11]. 重启 TUIC 服务${NC}"
-        echo -e "  ${CYAN}[12]. 卸载 sing-box 服务${NC}"
-        echo -e "  ${CYAN}[13]. 卸载 Caddy 服务${NC}"
-        echo -e "  ${CYAN}[14]. 卸载 TUIC 服务${NC}"
+        echo -e "  ${CYAN}[05]. Shadowsocks${NC}"
+        echo -e "  ${CYAN}[06]. NaiveProxy${NC}"
+        echo -e "  ${CYAN}[07]. TUIC V5${NC}"
+        echo -e "  ${CYAN}[08]. Hysteria${NC}"
+        echo -e "  ${CYAN}[09]. Direct 流量中转${NC}"
+        echo -e "  ${CYAN}[10]. 重启 sing-box 服务${NC}"
+        echo -e "  ${CYAN}[11]. 重启 Caddy 服务${NC}"
+        echo -e "  ${CYAN}[12]. 重启 TUIC 服务${NC}"
+        echo -e "  ${CYAN}[13]. 卸载 sing-box 服务${NC}"
+        echo -e "  ${CYAN}[14]. 卸载 Caddy 服务${NC}"
+        echo -e "  ${CYAN}[15]. 卸载 TUIC 服务${NC}"
         echo -e "  ${CYAN}[00]. 退出脚本${NC}"
 
         local choice
-        read -p "请选择 [0-14]: " choice
+        read -p "请选择 [0-15]: " choice
 
         case $choice in
             1)
@@ -676,39 +793,39 @@ function main_menu() {
                 view
                 ;;
             5)
-                unins
-                ;;
-            5)
-                unin
+                Shadowsocks_install
                 ;;
             6)
+                resta
+                ;;
+            7)
+                unin
+                ;;                
+            8)
                 unins
                 ;;
 
-            7)
+            9)
                 unins
                 ;;
-            8)
+            10)
                 Direct_install
                 ;;
-            9)
+            11)
                 restart_sing_box_service
                 ;;
-            10)
-                unin
-                ;;
-            11)
-                unin
-                ;;
             12)
-                uninstall_sing_box
+                unin
                 ;;
             13)
                 unin
                 ;;
             14)
+                uninstall_sing_box
+                ;;
+            15)
                 unin
-                ;;               
+                ;;           
             0)
                 echo -e "${GREEN}感谢使用 Reality 安装脚本！再见！${NC}"
                 exit 0
