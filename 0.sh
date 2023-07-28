@@ -499,12 +499,13 @@ WantedBy=multi-user.target'
 }
 
 # 函数：读取监听端口
-function Direct_listen_port() {
+function set_listen_port() {
     while true; do
         read -p "请输入监听端口 (默认443): " listen_port
         listen_port=${listen_port:-443}
 
         if [[ $listen_port =~ ^[1-9][0-9]{0,4}$ && $listen_port -le 65535 ]]; then
+            echo "监听端口设置成功：$listen_port"
             break
         else
             echo "错误：监听端口范围必须在1-65535之间，请重新输入。"
@@ -596,21 +597,6 @@ function Direct_write_config_file() {
     echo "配置文件 $config_file 写入成功。"
 }
 
-# 函数：读取监听端口
-function ss_listen_port() {
-    while true; do
-        read -p "请输入监听端口 (默认443): " listen_port
-        listen_port=${listen_port:-443}
-
-        if [[ $listen_port =~ ^[1-9][0-9]{0,4}$ && $listen_port -le 65535 ]]; then
-            echo "监听端口设置成功：$listen_port"
-            break
-        else
-            echo "错误：监听端口范围必须在1-65535之间，请重新输入。"
-        fi
-    done
-}
-
 # 函数：读取加密方式
 function ss_encryption_method() {
     while true; do
@@ -681,31 +667,6 @@ function ss_write_sing_box_config() {
 
     echo "配置文件 $config_file 创建成功。"
 }
-
-
-# 函数：获取用户输入的监听端口
-caddy_listen_port() {
-    local default_port=443
-
-    while true; do
-        read -p "请输入监听端口（默认: $default_port）: " listen_port
-
-        if [[ -z $listen_port ]]; then
-            # Use the default port if the user presses Enter without entering any value
-            listen_port=$default_port
-            break
-        elif [[ $listen_port =~ ^[0-9]+$ ]]; then
-            # Validate if the input is a valid port number
-            if ((listen_port >= 1 && listen_port <= 65535)); then
-                break
-            else
-                echo "无效的端口号，请重新输入。"
-            fi
-        else
-            echo "无效的端口号，请重新输入。"
-        fi
-    done
-}  
 
 # 函数：生成随机用户名
 generate_caddy_auth_user() {
@@ -886,24 +847,6 @@ test_caddy_config() {
     fi
 }
 
-
-# 设置监听端口
-function tuic_listen_port() {
-    local default_port="443"
-
-    while true; do
-        read -p "请输入监听端口 (默认$default_port): " listen_port
-        listen_port=${listen_port:-$default_port}
-
-        if [[ $listen_port =~ ^[1-9][0-9]{0,4}$ && $listen_port -le 65535 ]]; then
-            echo -e "${GREEN}监听端口设置成功：$listen_port${NC}"
-            break
-        else
-            echo -e "${RED}错误：监听端口范围必须在1-65535之间，请重新输入。${NC}"
-        fi
-    done
-}
-
 # 自动生成UUID
 function tuic_generate_uuid() {
     if [[ -n $(command -v uuidgen) ]]; then
@@ -1020,7 +963,7 @@ function generate_tuic_config() {
     echo "生成tuic的JSON配置文件..."
 
     # 设置监听端口
-    tuic_listen_port
+    set_listen_port
 
     # 自动生成UUID
     tuic_generate_uuid
@@ -1146,6 +1089,147 @@ echo -e "${CYAN}----------------------------------------------------------------
 echo -e "${CYAN}==================================================================${NC}"    
 }
 
+# 函数：读取上行速度
+function read_up_speed() {
+    while true; do
+        read -p "请输入上行速度 (默认50): " up_mbps
+        up_mbps=${up_mbps:-50}
+
+        if [[ $up_mbps =~ ^[0-9]+$ ]]; then
+            echo "上行速度设置成功：$up_mbps Mbps"
+            break
+        else
+            echo "错误：请输入数字作为上行速度。"
+        fi
+    done
+}
+
+# 函数：读取下行速度
+function read_down_speed() {
+    while true; do
+        read -p "请输入下行速度 (默认100): " down_mbps
+        down_mbps=${down_mbps:-100}
+
+        if [[ $down_mbps =~ ^[0-9]+$ ]]; then
+            echo "下行速度设置成功：$down_mbps Mbps"
+            break
+        else
+            echo "错误：请输入数字作为下行速度。"
+        fi
+    done
+}
+
+# 函数：读取认证密码
+function read_auth_password() {
+    read -p "请输入认证密码 (默认随机生成): " auth_password
+    auth_password=${auth_password:-$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)}
+    echo "认证密码设置成功：$auth_password"
+}
+
+# 函数：读取用户信息
+function read_users() {
+    users="[
+        {
+          \"auth_str\": \"$auth_password\"
+        }"
+
+    while true; do
+        read -p "是否继续添加用户？(Y/N，默认N): " -e add_multiple_users
+
+        if [[ -z "$add_multiple_users" ]]; then
+            add_multiple_users="N"
+        fi
+
+        if [[ "$add_multiple_users" == "Y" || "$add_multiple_users" == "y" ]]; then
+            read_auth_password
+            users+=",
+        {
+          \"auth_str\": \"$auth_password\"
+        }"
+        elif [[ "$add_multiple_users" == "N" || "$add_multiple_users" == "n" ]]; then
+            break
+        else
+            echo "无效的输入，请重新输入。"
+        fi
+    done
+
+    users+=$'\n      ]'
+}
+
+
+# 函数：验证域名解析
+function validate_domain() {
+    while true; do
+        read -p "请输入您的域名: " domain
+
+        if ping -c 1 "$domain" &>/dev/null; then
+            break
+        else
+            echo "错误：域名未解析或输入错误，请重新输入。"
+        fi
+    done
+}
+
+function generate_Hysteria_config() {
+    local config_file="/usr/local/etc/sing-box/config.json"
+    local certificate=""
+    local private_key=""
+
+    echo "生成 Hysteria 配置文件..."
+    
+    set_listen_port
+    read_up_speed
+    read_down_speed
+    read_auth_password
+    read_users
+    validate_domain
+    set_certificate_and_private_key
+    certificate_path="$certificate_path"
+    private_key_path="$private_key_path"
+
+    # 生成配置文件
+    echo "{
+  \"log\": {
+    \"disabled\": false,
+    \"level\": \"info\",
+    \"timestamp\": true
+  },
+  \"inbounds\": [
+    {
+      \"type\": \"hysteria\",
+      \"tag\": \"hysteria-in\",
+      \"listen\": \"::\",
+      \"listen_port\": $listen_port,
+      \"sniff\": true,
+      \"sniff_override_destination\": true,
+      \"up_mbps\": $up_mbps,
+      \"down_mbps\": $down_mbps,
+      \"users\": $users,
+      \"tls\": {
+        \"enabled\": true,
+        \"server_name\": \"$domain\",
+        \"alpn\": [
+          \"h3\"
+        ],
+        \"min_version\": \"1.2\",
+        \"max_version\": \"1.3\",
+        \"certificate_path\": \"$certificate_path\",
+        \"key_path\": \"$private_key_path\"
+      }
+    }
+  ],
+  \"outbounds\": [
+    {
+      \"type\": \"direct\",
+      \"tag\": \"direct\"
+    },
+    {
+      \"type\": \"block\",
+      \"tag\": \"block\"
+    }
+  ]
+}" > "$config_file"
+}
 
 
 
@@ -1261,7 +1345,7 @@ function Direct_install() {
     select_sing_box_install_option
     configure_sing_box_service
     check_sing_box_folder
-    Direct_listen_port
+    set_listen_port
     Direct_override_address
     Direct_override_port
     Direct_write_config_file
@@ -1277,7 +1361,7 @@ function Shadowsocks_install() {
     select_sing_box_install_option
     configure_sing_box_service
     check_sing_box_folder
-    ss_listen_port
+    set_listen_port
     ss_encryption_method
     ss_write_sing_box_config
     check_firewall_configuration    
@@ -1292,7 +1376,7 @@ function NaiveProxy_install() {
     install_go
     install_caddy
     check_caddy_folder
-    caddy_listen_port
+    set_listen_port
     generate_caddy_auth_user
     generate_caddy_auth_pass
     get_caddy_fake_site
@@ -1324,6 +1408,19 @@ function install_tuic_Serve() {
     display_tuic_config
 }
 
+function Hysteria_install() {
+    install_dependencies
+    enable_bbr
+    select_sing_box_install_option      
+    check_sing_box_folder
+    generate_Hysteria_config
+    check_firewall_configuration 
+    ask_certificate_option 
+    configure_sing_box_service
+    systemctl daemon-reload
+    systemctl enable sing-box
+    systemctl start sing-box
+}
 
 # 主菜单
 function main_menu() {
@@ -1375,7 +1472,7 @@ function main_menu() {
                 install_tuic_Serve
                 ;;                
             8)
-                unins
+                Hysteria_install
                 ;;
 
             9)
