@@ -343,31 +343,15 @@ WantedBy=multi-user.target'
         systemctl daemon-reload
 }
 
-# 函数：读取监听端口
-function hysteria_listen_port() {
+
+# 函数：读取上行速度
+function read_up_speed() {
     while true; do
-        read -p "请输入监听端口 (默认443): " listen_port
-        listen_port=${listen_port:-443}
+        read -p "请输入上行速度 (默认100 Mbps): " up_speed
+        up_speed=${up_speed:-100}
 
-        if [[ $listen_port =~ ^[1-9][0-9]{0,4}$ && $listen_port -le 65535 ]]; then
-            break
-        else
-            echo "错误：监听端口范围必须在1-65535之间，请重新输入。"
-        fi
-    done
-}
-
-# 函数：读取速度
-function read_speed() {
-    local default_speed=$1
-    local speed_name=$2
-
-    while true; do
-        read -p "请输入$speed_name (默认$default_speed): " speed
-        speed=${speed:-$default_speed}
-
-        if [[ $speed =~ ^[0-9]+$ ]]; then
-            echo "$speed_name 设置成功：$speed"
+        if [[ $up_speed =~ ^[0-9]+$ ]]; then
+            echo "上行速度设置成功：${up_speed} Mbps"
             break
         else
             echo "错误：请输入一个有效的数字。"
@@ -375,60 +359,146 @@ function read_speed() {
     done
 }
 
-# 函数：读取混淆密码
-function read_obfs_password() {
-    read -p "请输入混淆密码 (默认随机生成): " obfs_password
-
-    if [[ -z "$obfs_password" ]]; then
-        obfs_password=$(openssl rand -base64 8)
-    else
-        echo "混淆密码设置成功：$obfs_password"
-    fi
-}
-
-# 函数：读取认证密码
-function read_auth_password() {
-    read -p "请输入认证密码 (默认随机生成): " auth_password
-
-    if [[ -z "$auth_password" ]]; then
-        auth_password=$(openssl rand -base64 10)
-    else
-        echo "认证密码设置成功：$auth_password"
-    fi
-}
-# 函数：读取多个用户信息
-function read_users_info() {
-    local users=""
-    local auth_str=""
-
+# 函数：读取下行速度
+function read_down_speed() {
     while true; do
-        read_auth_password
+        read -p "请输入下行速度 (默认100 Mbps): " down_speed
+        down_speed=${down_speed:-100}
 
-        if [[ -z "$users" ]]; then
-            users="{\n  \"auth_str\": \"$auth_password\"\n}"
-        else
-            users+=",\n{\n  \"auth_str\": \"$auth_password\"\n}"
-        fi
-
-        read -p "是否继续添加用户？(Y/N): " add_more
-
-        if [[ "$add_more" != "Y" && "$add_more" != "y" ]]; then
+        if [[ $down_speed =~ ^[0-9]+$ ]]; then
+            echo "下行速度设置成功：${down_speed} Mbps"
             break
+        else
+            echo "错误：请输入一个有效的数字。"
         fi
     done
 }
 
-# 函数：读取域名并验证是否解析
-function read_domain() {
-    while true; do
-        read -p "请输入您的域名: " domain
+# 函数：读取认证密码
+function read_auth_password() {
+    read -p "请输入认证密码 (留空表示随机生成): " auth_password
 
-        # 检查域名是否绑定本机IP
+    if [[ -z "$auth_password" ]]; then
+        auth_password=$(openssl rand -base64 32)
+        echo "随机生成的认证密码为：${auth_password}"
+    fi
+}
+
+# 函数：读取多用户信息
+function read_multi_users() {
+    local users=()
+
+    while true; do
+        read -p "是否继续添加用户？(Y/N): " add_multiple_users
+
+        if [[ "$add_multiple_users" == "Y" || "$add_multiple_users" == "y" ]]; then
+            read -p "请输入认证密码: " auth_password
+
+            if [[ -z "$auth_password" ]]; then
+                auth_password=$(openssl rand -base64 32)
+                echo "随机生成的认证密码为：${auth_password}"
+            fi
+
+            users+=("{\"auth_str\": \"$auth_password\"}")
+        elif [[ "$add_multiple_users" == "N" || "$add_multiple_users" == "n" ]]; then
+            break
+        fi
+    done
+
+    echo "多用户设置成功。"
+    echo "${users[@]}"
+}
+
+# 函数：读取域名并检查是否绑定本机IP
+function read_and_validate_domain() {
+    while true; do
+        read -p "请输入域名: " domain
+
         if ping -c 1 "$domain" &>/dev/null; then
-            echo "域名验证通过。"
             break
         else
             echo "错误：域名未解析或输入错误，请重新输入。"
         fi
     done
+
+    echo "域名设置成功：${domain}"
 }
+
+# 函数：读取证书和私钥路径
+function read_certificate_paths() {
+    read -p "请输入证书路径 (默认/etc/ssl/private/cert.crt): " certificate_path
+    certificate_path=${certificate_path:-/etc/ssl/private/cert.crt}
+
+    read -p "请输入私钥路径 (默认/etc/ssl/private/private.key): " private_key_path
+    private_key_path=${private_key_path:-/etc/ssl/private/private.key}
+
+    echo "证书路径：${certificate_path}"
+    echo "私钥路径：${private_key_path}"
+}
+
+# 函数：生成sing-box配置文件
+function generate_sing_box_config() {
+    local config_file="/usr/local/etc/sing-box/config.json"
+
+    read_listen_port
+    read_up_speed
+    read_down_speed
+    read_auth_password
+    local users=$(read_multi_users) # Get users data from the function
+    read_and_validate_domain
+    read_certificate_paths
+
+    echo "生成sing-box配置文件..."
+    echo "{
+  \"log\": {
+    \"disabled\": false,
+    \"level\": \"info\",
+    \"timestamp\": true
+  },
+  \"inbounds\": [
+    {
+      \"type\": \"hysteria\",
+      \"tag\": \"hysteria-in\",
+      \"listen\": \"::\",
+      \"listen_port\": $listen_port,
+      \"sniff\": true,
+      \"sniff_override_destination\": true,
+      \"up_mbps\": $up_speed,
+      \"down_mbps\": $down_speed,
+      \"obfs\": \"obfs123\",
+      \"users\": [$users],
+      \"tls\": {
+        \"enabled\": true,
+        \"server_name\": \"$domain\",
+        \"alpn\": [
+          \"h3\"
+        ],
+        \"min_version\": \"1.2\",
+        \"max_version\": \"1.3\",
+        \"certificate_path\": \"$certificate_path\",
+        \"key_path\": \"$private_key_path\"
+      }
+    }
+  ],
+  \"outbounds\": [
+    {
+      \"type\": \"direct\",
+      \"tag\": \"direct\"
+    },
+    {
+      \"type\": \"block\",
+      \"tag\": \"block\"
+    }
+  ]
+}" > "$config_file"
+
+    echo "配置文件 $config_file 创建成功。"
+}
+
+# 主函数
+function main() {
+    generate_sing_box_config
+}
+
+main
+
