@@ -2118,7 +2118,7 @@ function main_menu() {
                 uninstall_sing_box
                 ;;         
             0)
-                echo "感谢使用 Reality 安装脚本！再见！"
+                echo "感谢使用 Mr. xiao 安装脚本！再见！"
                 exit 0
                 ;;
             *)
