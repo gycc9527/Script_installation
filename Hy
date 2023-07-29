@@ -3,6 +3,7 @@
 # 定义颜色变量
 RED='\033[0;31m'
 CYAN='\033[0;36m'
+YELLOW='\033[0;33m'
 NC='\033[0m' # No Color
 
 # 根据系统版本自动安装依赖
@@ -510,6 +511,24 @@ function set_listen_port() {
     done
 }
 
+# 设置监听端口
+function generate_listen_port() {
+    local listen_port
+
+    while true; do
+        read -p "请输入监听端口 (默认为 443): " listen_port
+        listen_port=${listen_port:-443}
+
+        if ! [[ "$listen_port" =~ ^[1-9][0-9]{0,4}$ || "$listen_port" == "443" ]]; then
+            echo -e "${RED}错误：端口范围1-65535，请重新输入！${NC}" >&2
+        else
+            break
+        fi
+    done
+
+    echo "$listen_port"
+}
+
 # 设置目标地址
 function Direct_override_address() {
     local is_valid_address=false
@@ -554,46 +573,6 @@ function Direct_override_port() {
     done
 }
 
-# 创建 Direct 配置文件
-function Direct_write_config_file() {
-    local config_file="/usr/local/etc/sing-box/config.json"
-
-    echo "{
-  \"log\": {
-    \"disabled\": false,
-    \"level\": \"info\",
-    \"timestamp\": true
-  },
-  \"inbounds\": [
-    {
-      \"type\": \"direct\",
-      \"tag\": \"direct-in\",
-      \"listen\": \"0.0.0.0\",
-      \"listen_port\": $listen_port,
-      \"sniff\": true,
-      \"sniff_override_destination\": true,
-      \"sniff_timeout\": \"300ms\",
-      \"proxy_protocol\": false,
-      \"network\": \"tcp\",
-      \"override_address\": \"$override_address\",
-      \"override_port\": $override_port
-    }
-  ],
-  \"outbounds\": [
-    {
-      \"type\": \"direct\",
-      \"tag\": \"direct\"
-    },
-    {
-      \"type\": \"block\",
-      \"tag\": \"block\"
-    }
-  ]
-}" > "$config_file"
-
-    echo "配置文件 $config_file 写入成功。"
-}
-
 # 设置加密方式
 function ss_encryption_method() {
     while true; do
@@ -628,41 +607,6 @@ function ss_encryption_method() {
                 ;;
         esac
     done
-}
-
-# 创建 shadowsocks 配置文件
-function ss_write_sing_box_config() {
-    local config_file="/usr/local/etc/sing-box/config.json"
-
-    echo "{
-  \"log\": {
-    \"disabled\": false,
-    \"level\": \"info\",
-    \"timestamp\": true
-  },
-  \"inbounds\": [
-    {
-      \"type\": \"shadowsocks\",
-      \"tag\": \"ss-in\",
-      \"listen\": \"::\",
-      \"listen_port\": $listen_port,
-      \"method\": \"$ss_method\",
-      \"password\": \"$ss_password\"
-    }
-  ],
-  \"outbounds\": [
-    {
-      \"type\": \"direct\",
-      \"tag\": \"direct\"
-    },
-    {
-      \"type\": \"block\",
-      \"tag\": \"block\"
-    }
-  ]
-}" > "$config_file"
-
-    echo "配置文件 $config_file 创建成功。"
 }
 
 # 生成随机用户名
@@ -707,7 +651,6 @@ function get_caddy_fake_site() {
     done
 }
 
-
 # 设置域名
 function get_caddy_domain() {
     read -p "请输入域名（用于自动申请证书）: " domain
@@ -725,99 +668,6 @@ function get_caddy_domain() {
     done
 
     echo "域名: $domain"
-}
-
-# 创建 Caddy 配置文件
-function create_caddy_config() {
-    local config_file="/usr/local/etc/caddy/caddy.json"
-
-    echo "{
-  \"apps\": {
-    \"http\": {
-      \"servers\": {
-        \"https\": {
-          \"listen\": [\":$listen_port\"],
-          \"routes\": [
-            {
-              \"handle\": [
-                {
-                  \"handler\": \"forward_proxy\",
-                  \"auth_user_deprecated\": \"$auth_user\",
-                  \"auth_pass_deprecated\": \"$auth_pass\",
-                  \"hide_ip\": true,
-                  \"hide_via\": true,
-                  \"probe_resistance\": {}
-                }
-              ]
-            },
-            {
-              \"handle\": [
-                {
-                  \"handler\": \"headers\",
-                  \"response\": {
-                    \"set\": {
-                      \"Strict-Transport-Security\": [\"max-age=31536000; includeSubDomains; preload\"]
-                    }
-                  }
-                },
-                {
-                  \"handler\": \"reverse_proxy\",
-                  \"headers\": {
-                    \"request\": {
-                      \"set\": {
-                        \"Host\": [
-                          \"{http.reverse_proxy.upstream.hostport}\"
-                        ],
-                        \"X-Forwarded-Host\": [\"{http.request.host}\"]
-                      }
-                    }
-                  },
-                  \"transport\": {
-                    \"protocol\": \"http\",
-                    \"tls\": {}
-                  },
-                  \"upstreams\": [
-                    {\"dial\": \"$fake_site:443\"}
-                  ]
-                }
-              ]
-            }
-          ],
-          \"tls_connection_policies\": [
-            {
-              \"match\": {
-                \"sni\": [\"$domain\"]
-              },
-              \"protocol_min\": \"tls1.2\",
-              \"protocol_max\": \"tls1.2\",
-              \"cipher_suites\": [\"TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256\"],
-              \"curves\": [\"secp521r1\",\"secp384r1\",\"secp256r1\"]
-            }
-          ],
-          \"protocols\": [\"h1\",\"h2\"]
-        }
-      }
-    },
-    \"tls\": {
-      \"certificates\": {
-        \"automate\": [\"$domain\"]
-      },
-      \"automation\": {
-        \"policies\": [
-          {
-            \"issuers\": [
-              {
-                \"module\": \"acme\"
-              }
-            ]
-          }
-        ]
-      }
-    }
-  }
-}" > "$config_file"
-
-    echo "配置文件 $config_file 写入成功。"
 }
 
 # 测试 caddy 配置文件
@@ -945,51 +795,6 @@ function set_congestion_control() {
     done
 }
 
-# 创建 tuic 配置文件
-function generate_tuic_config() {
-    local config_file="/usr/local/etc/tuic/config.json"
-    local users=""
-    local certificate=""
-    local private_key=""
-    
-    set_listen_port
-    tuic_generate_uuid
-    tuic_set_password
-    users="\"$uuid\": \"$password\""
-
-    tuic_add_multiple_users
-    users=$(echo -e "$users" | sed -e 's/^/        /')
-
-    set_certificate_and_private_key
-    certificate_path="$certificate_path"
-    private_key_path="$private_key_path"
-    set_congestion_control
-
-    # 生成tuic配置文件
-    echo "{
-    \"server\": \"[::]:$listen_port\",
-    \"users\": {
-$users
-    },
-    \"certificate\": \"$certificate_path\",
-    \"private_key\": \"$private_key_path\",
-    \"congestion_control\": \"$congestion_control\",
-    \"alpn\": [\"h3\", \"spdy/3.1\"],
-    \"udp_relay_ipv6\": true,
-    \"zero_rtt_handshake\": false,
-    \"dual_stack\": true,
-    \"auth_timeout\": \"3s\",
-    \"task_negotiation_timeout\": \"3s\",
-    \"max_idle_time\": \"10s\",
-    \"max_external_packet_size\": 1500,
-    \"send_window\": 16777216,
-    \"receive_window\": 8388608,
-    \"gc_interval\": \"3s\",
-    \"gc_lifetime\": \"15s\",
-    \"log_level\": \"warn\"
-}" > "$config_file"
-}
-
 # 询问证书来源选择
 function ask_certificate_option() {
     while true; do
@@ -1048,22 +853,6 @@ function tuic_apply_certificate() {
 
     set_certificate_path="$certificate_path"
     set_private_key_path="$private_key_path"
-}
-
-# 显示 tuic 配置信息
-function display_tuic_config() {
-    local config_file="/usr/local/etc/tuic/config.json"
-echo -e "${CYAN}TUIC节点配置信息：${NC}"    
-echo -e "${CYAN}==================================================================${NC}" 
-    echo "监听端口: $(jq -r '.server' "$config_file" | sed 's/\[::\]://')"
-echo -e "${CYAN}------------------------------------------------------------------${NC}" 
-    echo "UUID和密码列表:"
-    jq -r '.users | to_entries[] | "UUID:\(.key)\t密码:\(.value)"' "$config_file"
-echo -e "${CYAN}------------------------------------------------------------------${NC}" 
-    echo "拥塞控制算法: $(jq -r '.congestion_control' "$config_file")"
-echo -e "${CYAN}------------------------------------------------------------------${NC}" 
-    echo "ALPN协议:$(jq -r '.alpn[] | select(. != "")' "$config_file" | sed ':a;N;$!ba;s/\n/, /g')"
-echo -e "${CYAN}==================================================================${NC}"    
 }
 
 # 设置上行速度
@@ -1133,7 +922,6 @@ function read_users() {
     users+=$'\n      ]'
 }
 
-
 # 验证域名解析
 function validate_domain() {
     while true; do
@@ -1144,83 +932,6 @@ function validate_domain() {
         else
             echo -e "${RED}错误：域名未解析或输入错误，请重新输入。${NC}"
         fi
-    done
-}
-
-# 创建 Hysteria 配置文件
-function generate_Hysteria_config() {
-    local config_file="/usr/local/etc/sing-box/config.json"
-    local certificate=""
-    local private_key=""
- 
-    set_listen_port
-    read_up_speed
-    read_down_speed
-    read_auth_password
-    read_users
-    validate_domain
-    set_certificate_and_private_key
-    certificate_path="$certificate_path"
-    private_key_path="$private_key_path"
-
-    echo "生成 Hysteria 配置文件..."
-    echo "{
-  \"log\": {
-    \"disabled\": false,
-    \"level\": \"info\",
-    \"timestamp\": true
-  },
-  \"inbounds\": [
-    {
-      \"type\": \"hysteria\",
-      \"tag\": \"hysteria-in\",
-      \"listen\": \"::\",
-      \"listen_port\": $listen_port,
-      \"sniff\": true,
-      \"sniff_override_destination\": true,
-      \"up_mbps\": $up_mbps,
-      \"down_mbps\": $down_mbps,
-      \"users\": $users,
-      \"tls\": {
-        \"enabled\": true,
-        \"server_name\": \"$domain\",
-        \"alpn\": [
-          \"h3\"
-        ],
-        \"min_version\": \"1.2\",
-        \"max_version\": \"1.3\",
-        \"certificate_path\": \"$certificate_path\",
-        \"key_path\": \"$private_key_path\"
-      }
-    }
-  ],
-  \"outbounds\": [
-    {
-      \"type\": \"direct\",
-      \"tag\": \"direct\"
-    },
-    {
-      \"type\": \"block\",
-      \"tag\": \"block\"
-    }
-  ]
-}" > "$config_file"
-}
-
-# 显示配置信息
-function display_Hysteria_config_info() {
-    echo -e "配置信息如下："
-    echo "域名：$domain"
-    echo "监听端口：$listen_port"
-    echo "上行速度：${up_mbps}Mbps"
-    echo "下行速度：${down_mbps}Mbps"
-    echo "用户密码："
-
-    # 提取并显示每个用户的密码
-    local user_count=$(echo "$users" | jq length)
-    for ((i = 0; i < user_count; i++)); do
-        local auth_str=$(echo "$users" | jq -r ".[$i].auth_str")
-        echo "用户$i: $auth_str"
     done
 }
 
@@ -1334,87 +1045,6 @@ function set_shadowtls_handshake_server() {
     handshake_server_global=$handshake_server
 }
 
-# 创建 shadowtls 配置文件
-function configure_shadowtls_config_file() {
-    local config_file="/usr/local/etc/sing-box/config.json"
-
-    set_listen_port
-    set_shadowtls_username
-    generate_shadowtls_password
-
-    local users="{
-          \"name\": \"$username\",
-          \"password\": \"$shadowtls_password\"
-        }"
-
-    local add_multiple_users="Y"
-
-    while [[ $add_multiple_users == [Yy] ]]; do
-        read -p "是否添加多用户？(Y/N，默认为N): " add_multiple_users
-
-        if [[ $add_multiple_users == [Yy] ]]; then
-            add_shadowtls_user
-        fi
-    done
-
-    set_shadowtls_handshake_server
-
-    echo "{
-  \"inbounds\": [
-    {
-      \"type\": \"shadowtls\",
-      \"tag\": \"st-in\",
-      \"listen\": \"::\",
-      \"listen_port\": $listen_port,
-      \"version\": 3,
-      \"users\": [
-        $users
-      ],
-      \"handshake\": {
-        \"server\": \"$handshake_server_global\",
-        \"server_port\": 443
-      },
-      \"strict_mode\": true,
-      \"detour\": \"ss-in\"
-    },
-    {
-      \"type\": \"shadowsocks\",
-      \"tag\": \"ss-in\",
-      \"listen\": \"127.0.0.1\",
-      \"network\": \"tcp\",
-      \"method\": \"$ss_method\",
-      \"password\": \"$ss_password\"
-    }
-  ],
-  \"outbounds\": [
-    {
-      \"type\": \"direct\",
-      \"tag\": \"direct\"
-    },
-    {
-      \"type\": \"block\",
-      \"tag\": \"block\"
-    }
-  ]
-}" | jq '.' > "$config_file"
-}
-
-# 显示 sing-box 配置信息
-function display_shadowtls_config() {
-    local config_file="/usr/local/etc/sing-box/config.json"
-    echo "================================================================"
-    echo -e "${CYAN}ShadowTLS 节点配置信息：${NC}"
-    echo "----------------------------------------------------------------"
-    echo -e "${GREEN}监听端口: $listen_port${NC}"
-    echo "----------------------------------------------------------------"
-    jq -r '.inbounds[0].users[] | "ShadowTLS 密码: \(.password)"' "$config_file" | while IFS= read -r line; do
-    echo -e "${GREEN}$line${NC}"
-done  
-    echo "----------------------------------------------------------------"  
-    echo -e "${GREEN}Shadowsocks 密码: $ss_password${NC}"
-    echo "================================================================"
-}
-
 # 生成随机 UUID
 function reality_generate_uuid() {
     local uuid=$(uuidgen)
@@ -1454,24 +1084,6 @@ function select_flow_type() {
     done
 
     echo "$flow_type"
-}
-
-# 设置监听端口
-function generate_listen_port() {
-    local listen_port
-
-    while true; do
-        read -p "请输入监听端口 (默认为 443): " listen_port
-        listen_port=${listen_port:-443}
-
-        if ! [[ "$listen_port" =~ ^[1-9][0-9]{0,4}$ || "$listen_port" == "443" ]]; then
-            echo -e "${RED}错误：端口范围1-65535，请重新输入！${NC}" >&2
-        else
-            break
-        fi
-    done
-
-    echo "$listen_port"
 }
 
 # 验证服务器是否支持TLS 1.3
@@ -1697,10 +1309,347 @@ function generate_user_config() {
         done
     done
 
-    # 去除最后一个用户配置的末尾逗号
     users[-1]=${users[-1]%,}
 
     echo "${users[*]}"
+}
+
+# 创建 Direct 配置文件
+function Direct_write_config_file() {
+    local config_file="/usr/local/etc/sing-box/config.json"
+
+    echo "{
+  \"log\": {
+    \"disabled\": false,
+    \"level\": \"info\",
+    \"timestamp\": true
+  },
+  \"inbounds\": [
+    {
+      \"type\": \"direct\",
+      \"tag\": \"direct-in\",
+      \"listen\": \"0.0.0.0\",
+      \"listen_port\": $listen_port,
+      \"sniff\": true,
+      \"sniff_override_destination\": true,
+      \"sniff_timeout\": \"300ms\",
+      \"proxy_protocol\": false,
+      \"network\": \"tcp\",
+      \"override_address\": \"$override_address\",
+      \"override_port\": $override_port
+    }
+  ],
+  \"outbounds\": [
+    {
+      \"type\": \"direct\",
+      \"tag\": \"direct\"
+    },
+    {
+      \"type\": \"block\",
+      \"tag\": \"block\"
+    }
+  ]
+}" > "$config_file"
+
+    echo "配置文件 $config_file 写入成功。"
+}
+
+# 创建 shadowsocks 配置文件
+function ss_write_sing_box_config() {
+    local config_file="/usr/local/etc/sing-box/config.json"
+
+    echo "{
+  \"log\": {
+    \"disabled\": false,
+    \"level\": \"info\",
+    \"timestamp\": true
+  },
+  \"inbounds\": [
+    {
+      \"type\": \"shadowsocks\",
+      \"tag\": \"ss-in\",
+      \"listen\": \"::\",
+      \"listen_port\": $listen_port,
+      \"method\": \"$ss_method\",
+      \"password\": \"$ss_password\"
+    }
+  ],
+  \"outbounds\": [
+    {
+      \"type\": \"direct\",
+      \"tag\": \"direct\"
+    },
+    {
+      \"type\": \"block\",
+      \"tag\": \"block\"
+    }
+  ]
+}" > "$config_file"
+
+    echo "配置文件 $config_file 创建成功。"
+}
+
+# 创建 Caddy 配置文件
+function create_caddy_config() {
+    local config_file="/usr/local/etc/caddy/caddy.json"
+
+    echo "{
+  \"apps\": {
+    \"http\": {
+      \"servers\": {
+        \"https\": {
+          \"listen\": [\":$listen_port\"],
+          \"routes\": [
+            {
+              \"handle\": [
+                {
+                  \"handler\": \"forward_proxy\",
+                  \"auth_user_deprecated\": \"$auth_user\",
+                  \"auth_pass_deprecated\": \"$auth_pass\",
+                  \"hide_ip\": true,
+                  \"hide_via\": true,
+                  \"probe_resistance\": {}
+                }
+              ]
+            },
+            {
+              \"handle\": [
+                {
+                  \"handler\": \"headers\",
+                  \"response\": {
+                    \"set\": {
+                      \"Strict-Transport-Security\": [\"max-age=31536000; includeSubDomains; preload\"]
+                    }
+                  }
+                },
+                {
+                  \"handler\": \"reverse_proxy\",
+                  \"headers\": {
+                    \"request\": {
+                      \"set\": {
+                        \"Host\": [
+                          \"{http.reverse_proxy.upstream.hostport}\"
+                        ],
+                        \"X-Forwarded-Host\": [\"{http.request.host}\"]
+                      }
+                    }
+                  },
+                  \"transport\": {
+                    \"protocol\": \"http\",
+                    \"tls\": {}
+                  },
+                  \"upstreams\": [
+                    {\"dial\": \"$fake_site:443\"}
+                  ]
+                }
+              ]
+            }
+          ],
+          \"tls_connection_policies\": [
+            {
+              \"match\": {
+                \"sni\": [\"$domain\"]
+              },
+              \"protocol_min\": \"tls1.2\",
+              \"protocol_max\": \"tls1.2\",
+              \"cipher_suites\": [\"TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256\"],
+              \"curves\": [\"secp521r1\",\"secp384r1\",\"secp256r1\"]
+            }
+          ],
+          \"protocols\": [\"h1\",\"h2\"]
+        }
+      }
+    },
+    \"tls\": {
+      \"certificates\": {
+        \"automate\": [\"$domain\"]
+      },
+      \"automation\": {
+        \"policies\": [
+          {
+            \"issuers\": [
+              {
+                \"module\": \"acme\"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}" > "$config_file"
+
+    echo "配置文件 $config_file 写入成功。"
+}
+
+# 创建 tuic 配置文件
+function generate_tuic_config() {
+    local config_file="/usr/local/etc/tuic/config.json"
+    local users=""
+    local certificate=""
+    local private_key=""
+    
+    set_listen_port
+    tuic_generate_uuid
+    tuic_set_password
+    users="\"$uuid\": \"$password\""
+
+    tuic_add_multiple_users
+    users=$(echo -e "$users" | sed -e 's/^/        /')
+
+    set_certificate_and_private_key
+    certificate_path="$certificate_path"
+    private_key_path="$private_key_path"
+    set_congestion_control
+
+    # 生成tuic配置文件
+    echo "{
+    \"server\": \"[::]:$listen_port\",
+    \"users\": {
+$users
+    },
+    \"certificate\": \"$certificate_path\",
+    \"private_key\": \"$private_key_path\",
+    \"congestion_control\": \"$congestion_control\",
+    \"alpn\": [\"h3\", \"spdy/3.1\"],
+    \"udp_relay_ipv6\": true,
+    \"zero_rtt_handshake\": false,
+    \"dual_stack\": true,
+    \"auth_timeout\": \"3s\",
+    \"task_negotiation_timeout\": \"3s\",
+    \"max_idle_time\": \"10s\",
+    \"max_external_packet_size\": 1500,
+    \"send_window\": 16777216,
+    \"receive_window\": 8388608,
+    \"gc_interval\": \"3s\",
+    \"gc_lifetime\": \"15s\",
+    \"log_level\": \"warn\"
+}" > "$config_file"
+}
+
+# 创建 Hysteria 配置文件
+function generate_Hysteria_config() {
+    local config_file="/usr/local/etc/sing-box/config.json"
+    local certificate=""
+    local private_key=""
+ 
+    set_listen_port
+    read_up_speed
+    read_down_speed
+    read_auth_password
+    read_users
+    validate_domain
+    set_certificate_and_private_key
+    certificate_path="$certificate_path"
+    private_key_path="$private_key_path"
+
+    echo "生成 Hysteria 配置文件..."
+    echo "{
+  \"log\": {
+    \"disabled\": false,
+    \"level\": \"info\",
+    \"timestamp\": true
+  },
+  \"inbounds\": [
+    {
+      \"type\": \"hysteria\",
+      \"tag\": \"hysteria-in\",
+      \"listen\": \"::\",
+      \"listen_port\": $listen_port,
+      \"sniff\": true,
+      \"sniff_override_destination\": true,
+      \"up_mbps\": $up_mbps,
+      \"down_mbps\": $down_mbps,
+      \"users\": $users,
+      \"tls\": {
+        \"enabled\": true,
+        \"server_name\": \"$domain\",
+        \"alpn\": [
+          \"h3\"
+        ],
+        \"min_version\": \"1.2\",
+        \"max_version\": \"1.3\",
+        \"certificate_path\": \"$certificate_path\",
+        \"key_path\": \"$private_key_path\"
+      }
+    }
+  ],
+  \"outbounds\": [
+    {
+      \"type\": \"direct\",
+      \"tag\": \"direct\"
+    },
+    {
+      \"type\": \"block\",
+      \"tag\": \"block\"
+    }
+  ]
+}" > "$config_file"
+}
+
+# 创建 shadowtls 配置文件
+function configure_shadowtls_config_file() {
+    local config_file="/usr/local/etc/sing-box/config.json"
+
+    set_listen_port
+    set_shadowtls_username
+    generate_shadowtls_password
+
+    local users="{
+          \"name\": \"$username\",
+          \"password\": \"$shadowtls_password\"
+        }"
+
+    local add_multiple_users="Y"
+
+    while [[ $add_multiple_users == [Yy] ]]; do
+        read -p "是否添加多用户？(Y/N，默认为N): " add_multiple_users
+
+        if [[ $add_multiple_users == [Yy] ]]; then
+            add_shadowtls_user
+        fi
+    done
+
+    set_shadowtls_handshake_server
+
+    echo "{
+  \"inbounds\": [
+    {
+      \"type\": \"shadowtls\",
+      \"tag\": \"st-in\",
+      \"listen\": \"::\",
+      \"listen_port\": $listen_port,
+      \"version\": 3,
+      \"users\": [
+        $users
+      ],
+      \"handshake\": {
+        \"server\": \"$handshake_server_global\",
+        \"server_port\": 443
+      },
+      \"strict_mode\": true,
+      \"detour\": \"ss-in\"
+    },
+    {
+      \"type\": \"shadowsocks\",
+      \"tag\": \"ss-in\",
+      \"listen\": \"127.0.0.1\",
+      \"network\": \"tcp\",
+      \"method\": \"$ss_method\",
+      \"password\": \"$ss_password\"
+    }
+  ],
+  \"outbounds\": [
+    {
+      \"type\": \"direct\",
+      \"tag\": \"direct\"
+    },
+    {
+      \"type\": \"block\",
+      \"tag\": \"block\"
+    }
+  ]
+}" | jq '.' > "$config_file"
 }
 
 # 创建 reality 配置文件
@@ -1768,7 +1717,7 @@ function generate_reality_config() {
     echo "Sing-Box 配置文件已生成并保存至 $config_file"       
 }
 
-# 提取配置文件信息
+# 显示配置信息
 function display_reality_config() {
     local config_file="/usr/local/etc/sing-box/config.json"
 
@@ -1781,27 +1730,77 @@ function display_reality_config() {
         local short_ids=$(jq -r '.inbounds[0].tls.reality.short_id[]' "$config_file")
         local public_key=$(cat /tmp/public_key_temp.txt)
 
-        echo -e "${GREEN}节点配置信息：${NC}"
+        echo -e "${CYAN}节点配置信息：${NC}"
         echo -e "${CYAN}==================================================================${NC}"  
-        echo -e "${GREEN}监听端口: $listen_port${NC}"
+        echo -e "${CYAN}监听端口: $listen_port${NC}"
         echo -e "${CYAN}------------------------------------------------------------------${NC}" 
-        echo -e "${GREEN}用户 UUID:${NC}"
-        echo -e "${GREEN}$users${NC}"
+        echo -e "${CYAN}用户 UUID:${NC}"
+        echo -e "${CYAN}$users${NC}"
         echo -e "${CYAN}------------------------------------------------------------------${NC}" 
-        echo -e "${GREEN}流控类型: $flow_type${NC}"
+        echo -e "${CYAN}流控类型: $flow_type${NC}"
         echo -e "${CYAN}------------------------------------------------------------------${NC}" 
-        echo -e "${GREEN}传输层协议: $transport_type${NC}"
+        echo -e "${CYAN}传输层协议: $transport_type${NC}"
         echo -e "${CYAN}------------------------------------------------------------------${NC}" 
-        echo -e "${GREEN}ServerName: $server_name${NC}"
+        echo -e "${CYAN}ServerName: $server_name${NC}"
         echo -e "${CYAN}------------------------------------------------------------------${NC}" 
-        echo -e "${GREEN}目标网站地址: $target_server${NC}"
+        echo -e "${CYAN}目标网站地址: $target_server${NC}"
         echo -e "${CYAN}------------------------------------------------------------------${NC}" 
-        echo -e "${GREEN}Short ID:${NC}"
-        echo -e "${GREEN}$short_ids${NC}"
+        echo -e "${CYAN}Short ID:${NC}"
+        echo -e "${CYAN}$short_ids${NC}"
         echo -e "${CYAN}------------------------------------------------------------------${NC}" 
-        echo -e "${GREEN}PublicKey: $public_key${NC}"
+        echo -e "${CYAN}PublicKey: $public_key${NC}"
         echo -e "${CYAN}==================================================================${NC}"
 }
+
+# 显示配置信息
+function display_tuic_config() {
+    local config_file="/usr/local/etc/tuic/config.json"
+echo -e "${CYAN}TUIC节点配置信息：${NC}"    
+echo -e "${CYAN}==================================================================${NC}" 
+    echo "监听端口: $(jq -r '.server' "$config_file" | sed 's/\[::\]://')"
+echo -e "${CYAN}------------------------------------------------------------------${NC}" 
+    echo "UUID和密码列表:"
+    jq -r '.users | to_entries[] | "UUID:\(.key)\t密码:\(.value)"' "$config_file"
+echo -e "${CYAN}------------------------------------------------------------------${NC}" 
+    echo "拥塞控制算法: $(jq -r '.congestion_control' "$config_file")"
+echo -e "${CYAN}------------------------------------------------------------------${NC}" 
+    echo "ALPN协议:$(jq -r '.alpn[] | select(. != "")' "$config_file" | sed ':a;N;$!ba;s/\n/, /g')"
+echo -e "${CYAN}==================================================================${NC}"    
+}
+
+# 显示配置信息
+function display_Hysteria_config_info() {
+    echo -e "配置信息如下："
+    echo "域名：$domain"
+    echo "监听端口：$listen_port"
+    echo "上行速度：${up_mbps}Mbps"
+    echo "下行速度：${down_mbps}Mbps"
+    echo "用户密码："
+
+    # 提取并显示每个用户的密码
+    local user_count=$(echo "$users" | jq length)
+    for ((i = 0; i < user_count; i++)); do
+        local auth_str=$(echo "$users" | jq -r ".[$i].auth_str")
+        echo "用户$i: $auth_str"
+    done
+}
+
+# 显示配置信息
+function display_shadowtls_config() {
+    local config_file="/usr/local/etc/sing-box/config.json"
+    echo "================================================================"
+    echo -e "${CYAN}ShadowTLS 节点配置信息：${NC}"
+    echo "----------------------------------------------------------------"
+    echo -e "${GREEN}监听端口: $listen_port${NC}"
+    echo "----------------------------------------------------------------"
+    jq -r '.inbounds[0].users[] | "ShadowTLS 密码: \(.password)"' "$config_file" | while IFS= read -r line; do
+    echo -e "${GREEN}$line${NC}"
+done  
+    echo "----------------------------------------------------------------"  
+    echo -e "${GREEN}Shadowsocks 密码: $ss_password${NC}"
+    echo "================================================================"
+}
+
 
 # 重启 sing-box 服务
 function restart_sing_box_service() {
