@@ -1231,7 +1231,15 @@ function generate_Hysteria_config() {
 }" > "$config_file"
 }
 
-
+# 函数：显示配置信息
+function display_Hysteria_config_info() {
+    echo -e "配置信息如下："
+    echo "域名：$domain"
+    echo "监听端口：$listen_port"
+    echo "上行速度：${up_mbps}Mbps"
+    echo "下行速度：${down_mbps}Mbps"
+    echo "用户密码：$auth_password"
+}
 
 # 重启 sing-box 服务
 function restart_sing_box_service() {
@@ -1420,6 +1428,7 @@ function Hysteria_install() {
     systemctl daemon-reload
     systemctl enable sing-box
     systemctl start sing-box
+    display_Hysteria_config_info
 }
 
 # 主菜单
