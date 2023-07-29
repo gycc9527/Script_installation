@@ -1717,7 +1717,7 @@ function generate_reality_config() {
     echo "Sing-Box 配置文件已生成并保存至 $config_file"       
 }
 
-# 显示配置信息
+# 显示 Reality 配置信息
 function display_reality_config() {
     local config_file="/usr/local/etc/sing-box/config.json"
 
@@ -1730,32 +1730,33 @@ function display_reality_config() {
         local short_ids=$(jq -r '.inbounds[0].tls.reality.short_id[]' "$config_file")
         local public_key=$(cat /tmp/public_key_temp.txt)
 
-        echo -e "${CYAN}节点配置信息：${NC}"
+        echo -e "${CYAN}Vless+Reality 节点配置信息：${NC}"
         echo -e "${CYAN}==================================================================${NC}"  
-        echo -e "${CYAN}监听端口: $listen_port${NC}"
-        echo -e "${CYAN}------------------------------------------------------------------${NC}" 
-        echo -e "${CYAN}用户 UUID:${NC}"
-        echo -e "${CYAN}$users${NC}"
-        echo -e "${CYAN}------------------------------------------------------------------${NC}" 
-        echo -e "${CYAN}流控类型: $flow_type${NC}"
-        echo -e "${CYAN}------------------------------------------------------------------${NC}" 
-        echo -e "${CYAN}传输层协议: $transport_type${NC}"
-        echo -e "${CYAN}------------------------------------------------------------------${NC}" 
-        echo -e "${CYAN}ServerName: $server_name${NC}"
-        echo -e "${CYAN}------------------------------------------------------------------${NC}" 
-        echo -e "${CYAN}目标网站地址: $target_server${NC}"
-        echo -e "${CYAN}------------------------------------------------------------------${NC}" 
-        echo -e "${CYAN}Short ID:${NC}"
-        echo -e "${CYAN}$short_ids${NC}"
-        echo -e "${CYAN}------------------------------------------------------------------${NC}" 
-        echo -e "${CYAN}PublicKey: $public_key${NC}"
-        echo -e "${CYAN}==================================================================${NC}"
+        echo "监听端口: $listen_port"
+        echo -e "${CYAN}------------------------------------------------------------------${NC}"  
+        echo "用户 UUID:"
+        echo "$users"
+        echo -e "${CYAN}------------------------------------------------------------------${NC}"  
+        echo "流控类型: $flow_type"
+        echo -e "${CYAN}------------------------------------------------------------------${NC}"  
+        echo "传输层协议: $transport_type"
+        echo -e "${CYAN}------------------------------------------------------------------${NC}"  
+        echo "ServerName: $server_name"
+        echo -e "${CYAN}------------------------------------------------------------------${NC}"  
+        echo "目标网站地址: $target_server"
+        echo -e "${CYAN}------------------------------------------------------------------${NC}"  
+        echo "Short ID:"
+        echo "$short_ids"
+        echo -e "${CYAN}------------------------------------------------------------------${NC}"  
+        echo "PublicKey: $public_key"
+       echo -e "${CYAN}==================================================================${NC}" 
 }
 
-# 显示配置信息
+# 显示 TUIC 配置信息
 function display_tuic_config() {
     local config_file="/usr/local/etc/tuic/config.json"
-echo -e "${CYAN}TUIC节点配置信息：${NC}"    
+
+echo -e "${CYAN}TUIC 节点配置信息：${NC}"    
 echo -e "${CYAN}==================================================================${NC}" 
     echo "监听端口: $(jq -r '.server' "$config_file" | sed 's/\[::\]://')"
 echo -e "${CYAN}------------------------------------------------------------------${NC}" 
@@ -1768,39 +1769,92 @@ echo -e "${CYAN}----------------------------------------------------------------
 echo -e "${CYAN}==================================================================${NC}"    
 }
 
-# 显示配置信息
+# 显示 Hysteria 配置信息
 function display_Hysteria_config_info() {
-    echo -e "配置信息如下："
-    echo "域名：$domain"
-    echo "监听端口：$listen_port"
-    echo "上行速度：${up_mbps}Mbps"
-    echo "下行速度：${down_mbps}Mbps"
-    echo "用户密码："
 
-    # 提取并显示每个用户的密码
+    echo -e "${CYAN}Hysteria 节点配置信息：${NC}"
+    echo "${CYAN}==================================================================${NC}" 
+    echo "域名：$domain"
+    echo -e "${CYAN}------------------------------------------------------------------${NC}" 
+    echo "监听端口：$listen_port"
+    echo -e "${CYAN}------------------------------------------------------------------${NC}" 
+    echo "上行速度：${up_mbps}Mbps"
+    echo -e "${CYAN}------------------------------------------------------------------${NC}" 
+    echo "下行速度：${down_mbps}Mbps"
+    echo -e "${CYAN}------------------------------------------------------------------${NC}" 
+    echo "用户密码："
     local user_count=$(echo "$users" | jq length)
     for ((i = 0; i < user_count; i++)); do
         local auth_str=$(echo "$users" | jq -r ".[$i].auth_str")
         echo "用户$i: $auth_str"
     done
+    echo -e "${CYAN}==================================================================${NC}"  
 }
 
-# 显示配置信息
+# 显示 ShadowTLS 配置信息
 function display_shadowtls_config() {
     local config_file="/usr/local/etc/sing-box/config.json"
-    echo "================================================================"
+
     echo -e "${CYAN}ShadowTLS 节点配置信息：${NC}"
-    echo "----------------------------------------------------------------"
-    echo -e "${GREEN}监听端口: $listen_port${NC}"
-    echo "----------------------------------------------------------------"
+    echo -e "${CYAN}================================================================${NC}"
+    echo "监听端口: $listen_port"
+    echo -e "${CYAN}----------------------------------------------------------------${NC}"
     jq -r '.inbounds[0].users[] | "ShadowTLS 密码: \(.password)"' "$config_file" | while IFS= read -r line; do
-    echo -e "${GREEN}$line${NC}"
+    echo "$line"
 done  
-    echo "----------------------------------------------------------------"  
-    echo -e "${GREEN}Shadowsocks 密码: $ss_password${NC}"
-    echo "================================================================"
+    echo -e "${CYAN}----------------------------------------------------------------${NC}"
+    echo "Shadowsocks 密码: $ss_password"
+    echo -e "${CYAN}================================================================${NC}"
 }
 
+# 显示 Direct 配置信息
+function Direct_extract_config_info() {
+    local local_ip
+    local_ip=$(curl -s http://ifconfig.me)
+
+    echo -e "${CYAN}Direct 节点配置信息：${NC}"
+    echo -e "${CYAN}================================================================${NC}"
+    echo "中转地址: $local_ip"
+    echo -e "${CYAN}----------------------------------------------------------------${NC}"
+    echo "监听端口: $listen_port"
+    echo -e "${CYAN}----------------------------------------------------------------${NC}"
+    echo "目标地址: $override_address"
+    echo -e "${CYAN}----------------------------------------------------------------${NC}"
+    echo "目标端口: $override_port"
+    echo -e "${CYAN}================================================================${NC}"
+}
+
+# 显示 Shadowsocks 配置信息
+function Shadowsocks_extract_config_info() {
+    local local_ip
+    local_ip=$(curl -s http://ifconfig.me)
+
+    echo -e "${CYAN}Shadowsocks 节点配置信息：${NC}"
+    echo -e "${CYAN}================================================================${NC}"
+    echo "服务器地址: $local_ip"
+    echo -e "${CYAN}----------------------------------------------------------------${NC}"
+    echo "监听端口: $listen_port"
+    echo -e "${CYAN}----------------------------------------------------------------${NC}"
+    echo "加密方式: $ss_method"
+    echo -e "${CYAN}----------------------------------------------------------------${NC}"
+    echo "密码: $ss_password"
+    echo -e "${CYAN}================================================================${NC}"
+}
+
+# 显示 NaiveProxy 配置信息
+function NaiveProxy_extract_config_info() {
+
+    echo -e "${CYAN}NaiveProxy 节点配置信息：${NC}"
+    echo -e "${CYAN}================================================================${NC}"
+    echo "监听端口: $listen_port"
+    echo -e "${CYAN}----------------------------------------------------------------${NC}"
+    echo "用 户 名: $auth_user"
+    echo -e "${CYAN}----------------------------------------------------------------${NC}"
+    echo "密    码: $auth_pass"
+    echo -e "${CYAN}----------------------------------------------------------------${NC}"
+    echo "域    名: $domain"   
+    echo -e "${CYAN}================================================================${NC}"
+}
 
 # 重启 sing-box 服务
 function restart_sing_box_service() {
@@ -1876,39 +1930,6 @@ function uninstall_tuic() {
     rm /usr/local/etc/tuic/config.json
     rm /usr/local/bin/tuic
     echo "TUIC 服务已卸载..."
-}
-
-# 显示 Direct 配置信息
-function Direct_extract_config_info() {
-    local local_ip
-    local_ip=$(curl -s http://ifconfig.me)
-
-    echo "========= 安装完成 ========="
-    echo "本机 IP 地址: $local_ip"
-    echo "监听端口: $listen_port"
-    echo "目标地址: $override_address"
-    echo "目标端口: $override_port"
-}
-
-# 显示 Shadowsocks 配置信息
-function Shadowsocks_extract_config_info() {
-    local local_ip
-    local_ip=$(curl -s http://ifconfig.me)
-
-    echo "========= 配置完成 ========="
-    echo "本机 IP 地址: $local_ip"
-    echo "监听端口: $listen_port"
-    echo "加密方式: $ss_method"
-    echo "密码: $ss_password"
-}
-
-# 显示 NaiveProxy 配置信息
-function NaiveProxy_extract_config_info() {
-    echo -e "${GREEN}NaiveProxy节点配置信息:${NC}"
-    echo -e "监听端口: ${GREEN}$listen_port${NC}"
-    echo -e "用 户 名: ${GREEN}$auth_user${NC}"
-    echo -e "密    码: ${GREEN}$auth_pass${NC}"
-    echo -e "域    名: ${GREEN}$domain${NC}"   
 }
 
 # 安装 Direct 
@@ -1999,6 +2020,7 @@ function Hysteria_install() {
     systemctl start sing-box
     display_Hysteria_config_info
 }
+
 # 安装 shadowtls
 function shadowtls_install() {
     install_dependencies
@@ -2013,6 +2035,7 @@ function shadowtls_install() {
     systemctl start sing-box
     display_shadowtls_config
 }
+
 # 安装 reality
 function reality_install() {
     install_dependencies
@@ -2028,13 +2051,12 @@ function reality_install() {
     display_reality_config
 }
 
-
-# 主菜单
+# 主函数
 function main_menu() {
-        echo -e "${GREEN}               ------------------------------------------------------------------------------------ ${NC}"
-        echo -e "${GREEN}               |                          欢迎使用 Reality 安装程序                               |${NC}"
-        echo -e "${GREEN}               |                      项目地址:https://github.com/TinrLin                         |${NC}"
-        echo -e "${GREEN}               ------------------------------------------------------------------------------------${NC}"
+        echo -e "${CYAN}               ------------------------------------------------------------------------------------ ${NC}"
+        echo -e "${CYAN}               |                          欢迎使用 Reality 安装程序                               |${NC}"
+        echo -e "${CYAN}               |                      项目地址:https://github.com/TinrLin                         |${NC}"
+        echo -e "${CYAN}               ------------------------------------------------------------------------------------${NC}"
         echo -e "${CYAN}请选择要执行的操作：${NC}"
         echo -e "  ${CYAN}[01]. TUIC${NC}"         
         echo -e "  ${CYAN}[02]. Vless${NC}"
@@ -2052,7 +2074,7 @@ function main_menu() {
         echo -e "  ${CYAN}[00]. 退出脚本${NC}"
 
         local choice
-        read -p "请选择 [0-15]: " choice
+        read -p "请选择 [0-13]: " choice
 
         case $choice in
             1)
@@ -2105,6 +2127,5 @@ function main_menu() {
                 ;;
         esac
 }
-
 
 main_menu
