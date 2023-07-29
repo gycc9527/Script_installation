@@ -1,3 +1,8 @@
+# 定义颜色变量
+RED='\033[0;31m'
+CYAN='\033[0;36m'
+NC='\033[0m' # No Color
+
 # 根据系统版本自动安装依赖
 function install_dependencies() {
     local os_version
