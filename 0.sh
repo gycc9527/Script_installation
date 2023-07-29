@@ -1238,7 +1238,14 @@ function display_Hysteria_config_info() {
     echo "监听端口：$listen_port"
     echo "上行速度：${up_mbps}Mbps"
     echo "下行速度：${down_mbps}Mbps"
-    echo "用户密码：$auth_password"
+    echo "用户密码："
+
+    # 提取并显示每个用户的密码
+    local user_count=$(echo "$users" | jq length)
+    for ((i = 0; i < user_count; i++)); do
+        local auth_str=$(echo "$users" | jq -r ".[$i].auth_str")
+        echo "用户$i: $auth_str"
+    done
 }
 
 # 重启 sing-box 服务
