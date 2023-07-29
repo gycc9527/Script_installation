@@ -1,5 +1,5 @@
-# 函数：根据系统版本自动安装依赖
-install_dependencies() {
+# 根据系统版本自动安装依赖
+function install_dependencies() {
     local os_version
     os_version=$(lsb_release -si 2>/dev/null)
 
@@ -505,10 +505,10 @@ function set_listen_port() {
         listen_port=${listen_port:-443}
 
         if [[ $listen_port =~ ^[1-9][0-9]{0,4}$ && $listen_port -le 65535 ]]; then
-            echo "监听端口设置成功：$listen_port"
+            echo "监听端口设置成功：$listen_port" 
             break
         else
-            echo "错误：监听端口范围必须在1-65535之间，请重新输入。"
+            echo "错误：监听端口范围必须在1-65535之间，请重新输入。" 
         fi
     done
 }
@@ -1440,6 +1440,394 @@ done
     echo "================================================================"
 }
 
+# 生成随机 UUID
+function reality_generate_uuid() {
+    local uuid=$(uuidgen)
+    echo "$uuid"
+}
+
+# 生成随机 ShortId
+function generate_short_id() {
+    local length=$1
+    local short_id=$(openssl rand -hex "$length")
+    echo "$short_id"
+}
+
+# 选择流控类型
+function select_flow_type() {
+    local flow_type="xtls-rprx-vision"
+
+    while true; do
+        read -p "请选择流控类型：
+ [1]. xtls-rprx-vision（vless+vision+reality)
+ [2]. 留空(vless+h2/grpc+reality)
+请输入选项 (默认为 xtls-rprx-vision): " flow_option
+
+        case $flow_option in
+            "" | 1)
+                flow_type="xtls-rprx-vision"
+                break
+                ;;
+            2)
+                flow_type=""
+                break
+                ;;
+            *)
+                echo -e "${RED}错误的选项，请重新输入！${NC}" >&2
+                ;;
+        esac
+    done
+
+    echo "$flow_type"
+}
+
+# 监听端口配置
+function generate_listen_port() {
+    local listen_port
+
+    while true; do
+        read -p "请输入监听端口 (默认为 443): " listen_port
+        listen_port=${listen_port:-443}
+
+        if ! [[ "$listen_port" =~ ^[1-9][0-9]{0,4}$ || "$listen_port" == "443" ]]; then
+            echo -e "${RED}错误：端口范围1-65535，请重新输入！${NC}" >&2
+        else
+            break
+        fi
+    done
+
+    echo "$listen_port"
+}
+
+# 验证服务器是否支持TLS 1.3
+function validate_tls13_support() {
+    local server="$1"
+    local tls13_supported="false"
+
+    if command -v openssl >/dev/null 2>&1; then
+        local openssl_output=$(timeout 90s openssl s_client -connect "$server:443" -tls1_3 2>&1)
+        if [[ $openssl_output == *"Protocol  : TLSv1.3"* ]]; then
+            tls13_supported="true"
+        fi
+    fi
+
+    echo "$tls13_supported"
+}
+
+# ServerName 配置
+function generate_server_name_config() {
+    local server_name="www.gov.hk"
+
+    read -p "请输入可用的 serverName 列表 (默认为 www.gov.hk): " user_input
+    
+    # 验证服务器是否支持TLS 1.3
+    echo "正在验证服务器支持的TLS版本..." >&2
+    
+    if [[ -n "$user_input" ]]; then
+        server_name="$user_input"
+        local tls13_support=$(validate_tls13_support "$server_name")
+
+        if [[ "$tls13_support" == "false" ]]; then
+            echo -e "${RED}该网址不支持 TLS 1.3，请重新输入！${NC}" >&2
+            generate_server_name_config
+            return
+        fi
+    fi
+
+    echo "$server_name"
+}
+
+# 目标网站配置
+function generate_target_server_config() {
+    local target_server="www.gov.hk"
+
+    read -p "请输入目标网站地址(默认为 www.gov.hk): " user_input
+    
+    # 验证目标服务器是否支持TLS 1.3
+    echo "正在验证服务器支持的TLS版本..." >&2
+    
+    if [[ -n "$user_input" ]]; then
+        target_server="$user_input"
+        local tls13_support=$(validate_tls13_support "$target_server")
+
+        if [[ "$tls13_support" == "false" ]]; then
+            echo -e "${RED}该目标网站地址不支持 TLS 1.3，请重新输入！${NC}" >&2
+            generate_target_server_config
+            return
+        fi
+    fi
+
+    echo "$target_server"
+}
+
+# 私钥配置
+function generate_private_key_config() {
+    local private_key
+
+    while true; do
+        read -p "请输入私钥 (默认随机生成私钥): " private_key
+
+        if [[ -z "$private_key" ]]; then
+            local keypair_output=$(sing-box generate reality-keypair)
+            private_key=$(echo "$keypair_output" | awk -F: '/PrivateKey/{gsub(/ /, "", $2); print $2}')
+            echo "$keypair_output" | awk -F: '/PublicKey/{gsub(/ /, "", $2); print $2}' > /tmp/public_key_temp.txt
+            break
+        fi
+
+        # 验证私钥格式是否正确
+        if openssl pkey -inform PEM -noout -text -in <(echo "$private_key") >/dev/null 2>&1; then
+            break
+        else
+            echo -e "${RED}无效的私钥，请重新输入！${NC}" >&2
+        fi
+    done
+    
+    echo "$private_key"
+}
+
+# ShortIds 配置
+function generate_short_ids_config() {
+    local short_ids=()
+    local add_more_short_ids="y"
+    local length=8
+
+    while [[ "$add_more_short_ids" == "y" ]]; do
+        if [[ ${#short_ids[@]} -eq 8 ]]; then
+            echo -e "${YELLOW}已达到最大 shortId 数量限制！${NC}" >&2
+            break
+        fi
+
+        local short_id=$(generate_short_id "$length")
+        short_ids+=("$short_id")
+
+        while true; do
+            read -p "是否继续添加 shortId？(y/n，默认为 n): " add_more_short_ids
+            add_more_short_ids=${add_more_short_ids:-n}
+            case $add_more_short_ids in
+                [yY])
+                    add_more_short_ids="y"
+                    break
+                    ;;
+                [nN])
+                    add_more_short_ids="n"
+                    break
+                    ;;
+                *)
+                    echo -e "${RED}错误的选项，请重新输入！${NC}" >&2
+                    ;;
+            esac
+        done
+
+        if [[ "$add_more_short_ids" == "y" ]]; then
+            length=$((length - 1))
+        fi
+    done
+
+    local short_ids_config=$(printf '          "%s",\n' "${short_ids[@]}")
+    short_ids_config=${short_ids_config%,}  
+
+    echo "$short_ids_config"
+}
+
+# 流控配置
+function generate_flow_config() {
+    local flow_type="$1"
+    local transport_config=""
+
+    if [[ "$flow_type" != "" ]]; then
+        return  
+    fi
+
+    local transport_type=""
+
+    while true; do
+        read -p "请选择传输层协议：
+ [1]. http
+ [2]. grpc
+请输入选项 (默认为 http): " transport_option
+
+        case $transport_option in
+            1)
+                transport_type="http"
+                break
+                ;;
+            2)
+                transport_type="grpc"
+                break
+                ;;
+            "")
+                transport_type="http"
+                break
+                ;;                
+            *)
+                echo -e "${RED}错误的选项，请重新输入！${NC}" >&2
+                ;;
+        esac
+    done
+
+    transport_config='
+      "transport": {
+        "type": "'"$transport_type"'"
+      },'
+
+    echo "$transport_config"
+}
+
+# 用户配置
+function generate_user_config() {
+    local flow_type="$1"
+    local users=()
+    local add_more_users="y"
+
+    while [[ "$add_more_users" == "y" ]]; do
+        local user_uuid
+
+        while true; do
+            read -p "请输入用户 UUID (默认随机生成 UUID): " user_uuid
+
+            if [[ -z "$user_uuid" ]]; then
+                user_uuid=$(reality_generate_uuid)
+                break
+            fi
+
+            if [[ $user_uuid =~ ^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$ ]]; then
+                break
+            else
+                echo -e "${RED}无效的 UUID，请重新输入！${NC}" >&2
+            fi
+        done
+
+        users+=('
+        {
+          "uuid": "'"$user_uuid"'",
+          "flow": "'"$flow_type"'"
+        },')
+
+        while true; do
+            read -p "是否继续添加用户？(y/n，默认为 n): " add_more_users
+            add_more_users=${add_more_users:-n}
+            case $add_more_users in
+                [yY])
+                    add_more_users="y"
+                    break
+                    ;;
+                [nN])
+                    add_more_users="n"
+                    break
+                    ;;
+                *)
+                    echo -e "${RED}错误的选项，请重新输入！${NC}" >&2
+                    ;;
+            esac
+        done
+    done
+
+    # 去除最后一个用户配置的末尾逗号
+    users[-1]=${users[-1]%,}
+
+    echo "${users[*]}"
+}
+
+# 生成 Sing-Box 配置文件
+function generate_reality_config() {
+    local config_file="/usr/local/etc/sing-box/config.json"
+
+    local listen_port=$(generate_listen_port)
+    local flow_type=$(select_flow_type)
+
+    transport_config=$(generate_flow_config "$flow_type")
+
+    users=$(generate_user_config "$flow_type")
+
+    local server_name=$(generate_server_name_config)
+    local target_server=$(generate_target_server_config)
+    local private_key=$(generate_private_key_config)
+    local short_ids=$(generate_short_ids_config)
+
+    # 生成 Sing-Box 配置文件
+    local config_content='{
+  "log": {
+    "disabled": false,
+    "level": "info",
+    "timestamp": true
+  },
+  "inbounds": [
+    {
+      "type": "vless",
+      "tag": "vless-in",
+      "listen": "::",
+      "listen_port": '$listen_port',
+      "users": ['"$users"'
+      ],'"$transport_config"'
+      "tls": {
+        "enabled": true,
+        "server_name": "'"$server_name"'",
+        "reality": {
+          "enabled": true,
+          "handshake": {
+            "server": "'"$target_server"'",
+            "server_port": 443
+          },
+          "private_key": "'"$private_key"'",
+          "short_id": [
+'"$short_ids"'
+          ]
+        }
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "direct",
+      "tag": "direct"
+    },
+    {
+      "type": "block",
+      "tag": "block"
+    }
+  ]
+}'
+
+    echo "$config_content" > "$config_file"
+
+    echo "Sing-Box 配置文件已生成并保存至 $config_file"       
+}
+
+# 提取配置文件信息
+function display_reality_config() {
+    local config_file="/usr/local/etc/sing-box/config.json"
+
+        local listen_port=$(jq -r '.inbounds[0].listen_port' "$config_file")
+        local users=$(jq -r '.inbounds[0].users[].uuid' "$config_file")
+        local flow_type=$(jq -r '.inbounds[0].users[].flow' "$config_file")
+        local transport_type=$(jq -r '.inbounds[0].transport.type' "$config_file")
+        local server_name=$(jq -r '.inbounds[0].tls.server_name' "$config_file")
+        local target_server=$(jq -r '.inbounds[0].tls.reality.handshake.server' "$config_file")
+        local short_ids=$(jq -r '.inbounds[0].tls.reality.short_id[]' "$config_file")
+        local public_key=$(cat /tmp/public_key_temp.txt)
+
+        echo -e "${GREEN}节点配置信息：${NC}"
+        echo -e "${CYAN}==================================================================${NC}"  
+        echo -e "${GREEN}监听端口: $listen_port${NC}"
+        echo -e "${CYAN}------------------------------------------------------------------${NC}" 
+        echo -e "${GREEN}用户 UUID:${NC}"
+        echo -e "${GREEN}$users${NC}"
+        echo -e "${CYAN}------------------------------------------------------------------${NC}" 
+        echo -e "${GREEN}流控类型: $flow_type${NC}"
+        echo -e "${CYAN}------------------------------------------------------------------${NC}" 
+        echo -e "${GREEN}传输层协议: $transport_type${NC}"
+        echo -e "${CYAN}------------------------------------------------------------------${NC}" 
+        echo -e "${GREEN}ServerName: $server_name${NC}"
+        echo -e "${CYAN}------------------------------------------------------------------${NC}" 
+        echo -e "${GREEN}目标网站地址: $target_server${NC}"
+        echo -e "${CYAN}------------------------------------------------------------------${NC}" 
+        echo -e "${GREEN}Short ID:${NC}"
+        echo -e "${GREEN}$short_ids${NC}"
+        echo -e "${CYAN}------------------------------------------------------------------${NC}" 
+        echo -e "${GREEN}PublicKey: $public_key${NC}"
+        echo -e "${CYAN}==================================================================${NC}"
+}
+
 # 重启 sing-box 服务
 function restart_sing_box_service() {
     echo "重启 sing-box 服务..."
@@ -1599,7 +1987,7 @@ function NaiveProxy_install() {
     NaiveProxy_extract_config_info
 }
 
-function install_tuic_Serve() {
+function tuic_install() {
     install_dependencies
     enable_bbr
     create_tuic_directory   
@@ -1644,6 +2032,21 @@ function shadowtls_install() {
     display_shadowtls_config
 }
 
+function reality_install() {
+    install_dependencies
+    enable_bbr
+    select_sing_box_install_option      
+    check_sing_box_folder    
+    generate_reality_config   
+    check_firewall_configuration          
+    configure_sing_box_service    
+    systemctl daemon-reload
+    systemctl enable sing-box
+    systemctl start sing-box
+    display_reality_config
+}
+
+
 # 主菜单
 function main_menu() {
         echo -e "${GREEN}               ------------------------------------------------------------------------------------ ${NC}"
@@ -1651,21 +2054,19 @@ function main_menu() {
         echo -e "${GREEN}               |                      项目地址:https://github.com/TinrLin                         |${NC}"
         echo -e "${GREEN}               ------------------------------------------------------------------------------------${NC}"
         echo -e "${CYAN}请选择要执行的操作：${NC}"
-        echo -e "  ${CYAN}[01]. vless+vision+reality${NC}"
-        echo -e "  ${CYAN}[02]. vless+grpc+reality${NC}"
-        echo -e "  ${CYAN}[03]. vless+h2+reality${NC}"
-        echo -e "  ${CYAN}[04]. ShadowTLS V3${NC}"
-        echo -e "  ${CYAN}[05]. Shadowsocks${NC}"
-        echo -e "  ${CYAN}[06]. NaiveProxy${NC}"
-        echo -e "  ${CYAN}[07]. TUIC V5${NC}"
-        echo -e "  ${CYAN}[08]. Hysteria${NC}"
-        echo -e "  ${CYAN}[09]. Direct 流量中转${NC}"
+        echo -e "  ${CYAN}[01]. TUIC${NC}"         
+        echo -e "  ${CYAN}[02]. Vless${NC}"
+        echo -e "  ${CYAN}[03]. Direct${NC}" 
+        echo -e "  ${CYAN}[04]. Hysteria${NC}"                   
+        echo -e "  ${CYAN}[05]. ShadowTLS${NC}"
+        echo -e "  ${CYAN}[06]. NaiveProxy${NC}"            
+        echo -e "  ${CYAN}[07]. Shadowsocks${NC}"
+        echo -e "  ${CYAN}[08]. 重启 TUIC 服务${NC}"
+        echo -e "  ${CYAN}[09]. 重启 Caddy 服务${NC}"
         echo -e "  ${CYAN}[10]. 重启 sing-box 服务${NC}"
-        echo -e "  ${CYAN}[11]. 重启 Caddy 服务${NC}"
-        echo -e "  ${CYAN}[12]. 重启 TUIC 服务${NC}"
+        echo -e "  ${CYAN}[11]. 卸载 TUIC 服务${NC}"
+        echo -e "  ${CYAN}[12]. 卸载 Caddy 服务${NC}"
         echo -e "  ${CYAN}[13]. 卸载 sing-box 服务${NC}"
-        echo -e "  ${CYAN}[14]. 卸载 Caddy 服务${NC}"
-        echo -e "  ${CYAN}[15]. 卸载 TUIC 服务${NC}"
         echo -e "  ${CYAN}[00]. 退出脚本${NC}"
 
         local choice
@@ -1673,51 +2074,45 @@ function main_menu() {
 
         case $choice in
             1)
-                inst
+                tuic_install
                 ;;
             2)
-                stop
+                reality_install
                 ;;
             3)
-                resta
+                Direct_install
                 ;;
             4)
-                shadowtls_install
+                Hysteria_install
                 ;;
             5)
-                Shadowsocks_install
+                shadowtls_install
                 ;;
             6)
                 NaiveProxy_install
                 ;;
             7)
-                install_tuic_Serve
+                Shadowsocks_install
                 ;;                
             8)
-                Hysteria_install
+                restart_tuic
                 ;;
 
             9)
-                Direct_install
+                restart_naiveproxy_service
                 ;;
             10)
-                restart_naiveproxy_service
+                restart_sing_box_service
                 ;;
             11)
-                restart_naiveproxy_service
+                uninstall_tuic
                 ;;
             12)
-                restart_tuic
+                uninstall_naiveproxy
                 ;;
             13)
                 uninstall_sing_box
-                ;;
-            14)
-                uninstall_naiveproxy
-                ;;
-            15)
-                uninstall_tuic
-                ;;           
+                ;;         
             0)
                 echo -e "${GREEN}感谢使用 Reality 安装脚本！再见！${NC}"
                 exit 0
