@@ -1914,9 +1914,9 @@ function uninstall_naiveproxy() {
     echo "开始卸载 NaiveProxy..."
     systemctl stop caddy
     systemctl disable caddy
-    rm /etc/systemd/system/caddy.service
-    rm /usr/local/etc/caddy/caddy.json
-    rm /usr/bin/caddy
+    rm -rf /etc/systemd/system/caddy.service
+    rm -rf /usr/local/etc/caddy
+    rm -rf /usr/bin/caddy
     systemctl daemon-reload
     echo "NaiveProxy 卸载完成。"
 }
@@ -1926,9 +1926,9 @@ function uninstall_tuic() {
     echo "卸载 TUIC 服务..."
     systemctl stop tuic.service
     systemctl disable tuic.service
-    rm /etc/systemd/system/tuic.service
-    rm /usr/local/etc/tuic/config.json
-    rm /usr/local/bin/tuic
+    rm -rf /etc/systemd/system/tuic.service
+    rm -rf /usr/local/etc/tuic
+    rm -rf /usr/local/bin/tuic
     echo "TUIC 服务已卸载..."
 }
 
