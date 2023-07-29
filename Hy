@@ -2054,7 +2054,7 @@ function reality_install() {
 # 主函数
 function main_menu() {
         echo -e "${CYAN}               ------------------------------------------------------------------------------------ ${NC}"
-        echo -e "${CYAN}               |                          欢迎使用 Reality 安装程序                               |${NC}"
+        echo -e "${CYAN}               |                          欢迎使用 Mr. xiao 一键脚本                               |${NC}"
         echo -e "${CYAN}               |                      项目地址:https://github.com/TinrLin                         |${NC}"
         echo -e "${CYAN}               ------------------------------------------------------------------------------------${NC}"
         echo -e "${CYAN}请选择要执行的操作：${NC}"
