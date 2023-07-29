@@ -1248,6 +1248,198 @@ function display_Hysteria_config_info() {
     done
 }
 
+# 设置用户名
+function set_shadowtls_username() {
+    read -p "$(echo -e "${CYAN}请输入用户名 (默认随机生成): ${NC}")" new_username
+    username=${new_username:-$(generate_shadowtls_random_username)}
+    echo -e "${GREEN}用户名: $username${NC}"
+}
+
+# 生成随机用户名
+function generate_shadowtls_random_username() {
+    local username=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 8 | head -n 1)
+    echo "$username"
+}
+
+# 生成 ShadowTLS 密码
+function generate_shadowtls_password() {
+    read -p "$(echo -e "${CYAN}请选择 Shadowsocks 加密方式：
+1. 2022-blake3-chacha20-poly1305
+2. 2022-blake3-aes-256-gcm
+3. 2022-blake3-aes-128-gcm
+请输入对应的数字 (默认1): ${NC}")" encryption_choice
+    encryption_choice=${encryption_choice:-1}
+
+    case $encryption_choice in
+        1)
+            ss_method="2022-blake3-chacha20-poly1305"
+            shadowtls_password=$(openssl rand -base64 32)
+            ss_password=$(openssl rand -base64 32)
+            ;;
+        2)
+            ss_method="2022-blake3-aes-256-gcm"
+            shadowtls_password=$(openssl rand -base64 32)
+            ss_password=$(openssl rand -base64 32)
+            ;;
+        3)
+            ss_method="2022-blake3-aes-128-gcm"
+            shadowtls_password=$(openssl rand -base64 16)
+            ss_password=$(openssl rand -base64 16)
+            ;;
+        *)
+            echo -e "${RED}无效的选择，使用默认加密方式。${NC}"
+            ss_method="2022-blake3-chacha20-poly1305"
+            shadowtls_password=$(openssl rand -base64 32)
+            ss_password=$(openssl rand -base64 32)
+            ;;
+    esac
+
+    echo -e "${GREEN}加密方式: $ss_method${NC}"
+}
+
+# 添加用户
+function add_shadowtls_user() {
+    local user_password=""
+    if [[ $encryption_choice == 1 || $encryption_choice == 2 ]]; then
+        user_password=$(openssl rand -base64 32)
+    elif [[ $encryption_choice == 3 ]]; then
+        user_password=$(openssl rand -base64 16)
+    fi
+
+    read -p "$(echo -e "${CYAN}请输入用户名 (默认随机生成): ${NC}")" new_username
+    local new_user=${new_username:-$(generate_shadowtls_random_username)}
+
+    users+=",{
+      \"name\": \"$new_user\",
+      \"password\": \"$user_password\"
+    }"
+
+    echo -e "${GREEN}用户名: $new_user${NC}"
+    echo -e "${GREEN}ShadowTLS 密码: $user_password${NC}"
+}
+
+# 设置握手服务器地址
+function set_shadowtls_handshake_server() {
+    local handshake_server=""
+    local openssl_output=""
+
+    read -p "$(echo -e "${CYAN}请输入握手服务器地址 (默认www.apple.com): ${NC}")" handshake_server
+    handshake_server=${handshake_server:-www.apple.com}
+
+    # 验证握手服务器是否支持TLS 1.3
+    echo "正在验证握手服务器支持的TLS版本..."
+
+    local is_supported="false"
+
+    if command -v openssl >/dev/null 2>&1; then
+        local openssl_version=$(openssl version)
+
+        if [[ $openssl_version == *"OpenSSL"* ]]; then
+            while true; do
+                openssl_output=$(timeout 90s openssl s_client -connect "$handshake_server:443" -tls1_3 2>&1)
+
+                if [[ $openssl_output == *"Protocol  : TLSv1.3"* ]]; then
+                    is_supported="true"
+                    echo -e "${GREEN}握手服务器支持TLS 1.3。${NC}"
+                    break
+                else
+                    echo -e "${RED}错误：握手服务器不支持TLS 1.3，请重新输入握手服务器地址。${NC}"
+                    read -p "$(echo -e "${CYAN}请输入握手服务器地址 (默认www.apple.com): ${NC}")" handshake_server
+                    handshake_server=${handshake_server:-www.apple.com}
+                    echo "正在验证握手服务器支持的TLS版本..."
+                fi
+            done
+        fi
+    fi
+
+    if [[ $is_supported == "false" ]]; then
+        echo -e "${YELLOW}警告：无法验证握手服务器支持的TLS版本。请确保握手服务器支持TLS 1.3。${NC}"
+    fi
+    handshake_server_global=$handshake_server
+}
+
+# 配置 sing-box 配置文件
+function configure_shadowtls_config_file() {
+    local config_file="/usr/local/etc/sing-box/config.json"
+
+    set_listen_port
+    set_shadowtls_username
+    generate_shadowtls_password
+
+    local users="{
+          \"name\": \"$username\",
+          \"password\": \"$shadowtls_password\"
+        }"
+
+    local add_multiple_users="Y"
+
+    while [[ $add_multiple_users == [Yy] ]]; do
+        read -p "$(echo -e "${CYAN}是否添加多用户？(Y/N，默认为N): ${NC}")" add_multiple_users
+
+        if [[ $add_multiple_users == [Yy] ]]; then
+            add_shadowtls_user
+        fi
+    done
+
+    set_shadowtls_handshake_server
+
+    # 写入配置文件
+    echo "{
+  \"inbounds\": [
+    {
+      \"type\": \"shadowtls\",
+      \"tag\": \"st-in\",
+      \"listen\": \"::\",
+      \"listen_port\": $listen_port,
+      \"version\": 3,
+      \"users\": [
+        $users
+      ],
+      \"handshake\": {
+        \"server\": \"$handshake_server_global\",
+        \"server_port\": 443
+      },
+      \"strict_mode\": true,
+      \"detour\": \"ss-in\"
+    },
+    {
+      \"type\": \"shadowsocks\",
+      \"tag\": \"ss-in\",
+      \"listen\": \"127.0.0.1\",
+      \"network\": \"tcp\",
+      \"method\": \"$ss_method\",
+      \"password\": \"$ss_password\"
+    }
+  ],
+  \"outbounds\": [
+    {
+      \"type\": \"direct\",
+      \"tag\": \"direct\"
+    },
+    {
+      \"type\": \"block\",
+      \"tag\": \"block\"
+    }
+  ]
+}" | jq '.' > "$config_file"
+}
+
+# 显示 sing-box 配置信息
+function display_shadowtls_config() {
+    local config_file="/usr/local/etc/sing-box/config.json"
+    echo "================================================================"
+    echo -e "${CYAN}ShadowTLS 节点配置信息：${NC}"
+    echo "----------------------------------------------------------------"
+    echo -e "${GREEN}监听端口: $listen_port${NC}"
+    echo "----------------------------------------------------------------"
+    jq -r '.inbounds[0].users[] | "ShadowTLS 密码: \(.password)"' "$config_file" | while IFS= read -r line; do
+    echo -e "${GREEN}$line${NC}"
+done  
+    echo "----------------------------------------------------------------"  
+    echo -e "${GREEN}Shadowsocks 密码: $ss_password${NC}"
+    echo "================================================================"
+}
+
 # 重启 sing-box 服务
 function restart_sing_box_service() {
     echo "重启 sing-box 服务..."
@@ -1438,6 +1630,20 @@ function Hysteria_install() {
     display_Hysteria_config_info
 }
 
+function shadowtls_install() {
+    install_dependencies
+    enable_bbr
+    select_sing_box_install_option      
+    check_sing_box_folder
+    configure_shadowtls_config_file
+    check_firewall_configuration      
+    configure_sing_box_service
+    systemctl daemon-reload
+    systemctl enable sing-box
+    systemctl start sing-box
+    display_shadowtls_config
+}
+
 # 主菜单
 function main_menu() {
         echo -e "${GREEN}               ------------------------------------------------------------------------------------ ${NC}"
@@ -1476,7 +1682,7 @@ function main_menu() {
                 resta
                 ;;
             4)
-                view
+                shadowtls_install
                 ;;
             5)
                 Shadowsocks_install
